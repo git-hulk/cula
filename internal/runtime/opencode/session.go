@@ -1,0 +1,245 @@
+package opencode
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os/exec"
+	"sync"
+	"syscall"
+
+	iruntime "github.com/git-hulk/aime/internal/runtime"
+	aime "github.com/git-hulk/aime/pkg"
+)
+
+var _ aime.Session = (*session)(nil)
+
+type session struct {
+	mu        sync.Mutex
+	runtime   *Runtime
+	input     aime.SessionInput
+	events    chan aime.Event
+	sessionID string
+	childCmd  *exec.Cmd
+	promptCh  chan string
+	doneCh    chan struct{}
+	doneOnce  sync.Once
+	ctx       context.Context
+	cancelCtx context.CancelFunc
+	parser    eventParser
+}
+
+func newSession(ctx context.Context, rt *Runtime, input aime.SessionInput) (aime.Session, error) {
+	input = iruntime.NormalizeInput(input)
+	runCtx, cancel := context.WithCancel(context.Background())
+	s := &session{
+		runtime:   rt,
+		input:     input,
+		events:    make(chan aime.Event, 1024),
+		sessionID: input.SessionID,
+		promptCh:  make(chan string, 16),
+		doneCh:    make(chan struct{}),
+		ctx:       runCtx,
+		cancelCtx: cancel,
+		parser:    eventParser{},
+	}
+	iruntime.Emit(s.events, s.doneCh, aime.Event{
+		Type:      aime.EventState,
+		Runtime:   aime.RuntimeOpenCode,
+		SessionID: input.SessionID,
+		State:     aime.StateRunning,
+	})
+	go s.consumePrompts()
+	if input.Prompt != "" {
+		if err := s.Send(ctx, input.Prompt); err != nil {
+			_ = s.Cancel(ctx)
+			return nil, err
+		}
+	}
+	return s, nil
+}
+
+func (s *session) Send(ctx context.Context, prompt string) error {
+	if prompt == "" {
+		return nil
+	}
+	select {
+	case s.promptCh <- prompt:
+		return nil
+	case <-s.doneCh:
+		return iruntime.ErrSessionClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *session) Events() <-chan aime.Event {
+	return s.events
+}
+
+func (s *session) Cancel(ctx context.Context) error {
+	s.doneOnce.Do(func() {
+		exit := -1
+		iruntime.Emit(s.events, nil, aime.Event{
+			Type:      aime.EventState,
+			Runtime:   aime.RuntimeOpenCode,
+			SessionID: s.currentSessionID(),
+			State:     aime.StateCanceled,
+			ExitCode:  &exit,
+		})
+		close(s.doneCh)
+		s.cancelCtx()
+		s.mu.Lock()
+		cmd := s.childCmd
+		s.mu.Unlock()
+		if cmd != nil && cmd.Process != nil {
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+		}
+		close(s.events)
+	})
+	return nil
+}
+
+func (s *session) currentSessionID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sessionID
+}
+
+func (s *session) consumePrompts() {
+	for {
+		select {
+		case prompt := <-s.promptCh:
+			exitCode := s.spawnAndWait(prompt)
+			if exitCode != 0 {
+				exit := exitCode
+				iruntime.Emit(s.events, s.doneCh, aime.Event{
+					Type:      aime.EventState,
+					Runtime:   aime.RuntimeOpenCode,
+					SessionID: s.currentSessionID(),
+					State:     aime.StateFailed,
+					ExitCode:  &exit,
+				})
+			}
+		case <-s.doneCh:
+			return
+		}
+	}
+}
+
+func (s *session) spawnAndWait(prompt string) int {
+	sessionID := s.currentSessionID()
+	args := s.buildArgs(sessionID, prompt)
+	cmd := exec.CommandContext(s.ctx, iruntime.BinaryPath(s.runtime.cfg, "opencode"), args...)
+	cmd.Dir = s.input.WorkingDir
+	cmd.Env = iruntime.CommandEnv(s.input, s.runtime.cfg)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		s.emitError(fmt.Sprintf("stdout pipe: %v", err))
+		return 1
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		s.emitError(fmt.Sprintf("stderr pipe: %v", err))
+		return 1
+	}
+	if err := cmd.Start(); err != nil {
+		s.emitError(fmt.Sprintf("start opencode: %v", err))
+		return 1
+	}
+
+	s.mu.Lock()
+	s.childCmd = cmd
+	s.mu.Unlock()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		s.readStdout(stdout)
+	}()
+	go func() {
+		defer wg.Done()
+		s.readStderr(stderr)
+	}()
+
+	waitErr := cmd.Wait()
+	wg.Wait()
+
+	s.mu.Lock()
+	s.childCmd = nil
+	s.mu.Unlock()
+
+	exitCode := iruntime.ExitCode(waitErr)
+	if exitCode == 0 {
+		iruntime.Emit(s.events, s.doneCh, aime.Event{
+			Type:      aime.EventDone,
+			Runtime:   aime.RuntimeOpenCode,
+			SessionID: s.currentSessionID(),
+		})
+	}
+	return exitCode
+}
+
+func (s *session) buildArgs(sessionID, prompt string) []string {
+	args := []string{"run", "--format", "json", "--thinking"}
+	if s.input.Permission == aime.PermissionSkip {
+		args = append(args, "--dangerously-skip-permissions")
+	}
+	if s.input.Model != "" {
+		args = append(args, "--model", s.input.Model)
+	}
+	if sessionID != "" {
+		args = append(args, "--session", sessionID)
+	}
+	return append(args, prompt)
+}
+
+func (s *session) readStdout(r io.Reader) {
+	scanner := iruntime.ScannerFor(r)
+	for scanner.Scan() {
+		line := append([]byte(nil), scanner.Bytes()...)
+		var raw json.RawMessage
+		if err := json.Unmarshal(line, &raw); err != nil {
+			s.emitError(fmt.Sprintf("decode stdout: %v", err))
+			continue
+		}
+		if id := s.parser.captureSession(raw); id != "" {
+			s.mu.Lock()
+			s.sessionID = id
+			s.mu.Unlock()
+		}
+		for _, ev := range iruntime.DecorateEvents(ParseEvent(raw), aime.RuntimeOpenCode, s.currentSessionID(), raw) {
+			iruntime.Emit(s.events, s.doneCh, ev)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		s.emitError(fmt.Sprintf("read stdout: %v", err))
+	}
+}
+
+func (s *session) readStderr(r io.Reader) {
+	scanner := iruntime.ScannerFor(r)
+	for scanner.Scan() {
+		iruntime.Emit(s.events, s.doneCh, aime.Event{
+			Type:      aime.EventStderr,
+			Runtime:   aime.RuntimeOpenCode,
+			SessionID: s.currentSessionID(),
+			Error:     scanner.Text(),
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		s.emitError(fmt.Sprintf("read stderr: %v", err))
+	}
+}
+
+func (s *session) emitError(message string) {
+	iruntime.Emit(s.events, s.doneCh, aime.Event{
+		Type:      aime.EventError,
+		Runtime:   aime.RuntimeOpenCode,
+		SessionID: s.currentSessionID(),
+		Error:     message,
+	})
+}
