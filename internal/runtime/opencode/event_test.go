@@ -22,29 +22,17 @@ func TestParseEventStructuredActivityAndSession(t *testing.T) {
 	if got := parser.captureSession(raw); got != "open-session" {
 		t.Fatalf("session id = %q, want open-session", got)
 	}
-	events := ParseEvent(raw)
-	if len(events) != 1 || events[0].Activity == nil || events[0].Activity.Type != aime.ActivityReasoning {
-		t.Fatalf("reasoning events = %#v", events)
+	ev, ok := ParseEvent(raw)
+	if !ok || ev.Activity == nil || ev.Activity.Type != aime.ActivityReasoning {
+		t.Fatalf("reasoning event = %#v, %v", ev, ok)
 	}
-	if got := events[0].Activity.Parameters; len(got) != 1 || got[0] != "Inspecting repo" {
+	if got := ev.Activity.Parameters; len(got) != 1 || got[0] != "Inspecting repo" {
 		t.Fatalf("reasoning params = %#v", got)
 	}
 
 	tool := rawJSON(t, `{"type":"part","part":{"type":"tool","tool":"bash","callID":"call-1","input":{"command":"ls"},"state":{"status":"completed","output":"done"}}}`)
-	events = ParseEvent(tool)
-	if len(events) != 3 {
-		t.Fatalf("tool events len = %d, want 3: %#v", len(events), events)
-	}
-	if events[0].Activity == nil || events[0].Activity.Type != aime.ActivityToolCall {
-		t.Fatalf("activity = %#v", events[0].Activity)
-	}
-	if got := events[0].Activity.Parameters; len(got) != 2 || got[0] != "bash" || got[1] != "ls" {
-		t.Fatalf("tool params = %#v", got)
-	}
-	if events[1].ToolCall == nil || events[1].ToolCall.ID != "call-1" {
-		t.Fatalf("tool call = %#v", events[1].ToolCall)
-	}
-	if events[2].ToolResult == nil || events[2].ToolResult.Content != "done" {
-		t.Fatalf("tool result = %#v", events[2].ToolResult)
+	ev, ok = ParseEvent(tool)
+	if !ok || ev.Type != aime.EventToolResult || ev.ToolResult == nil || ev.ToolResult.Content != "done" {
+		t.Fatalf("tool result event = %#v, %v", ev, ok)
 	}
 }

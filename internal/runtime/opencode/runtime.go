@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -29,7 +30,7 @@ func (r *Runtime) Detect(ctx context.Context) (aime.RuntimeInfo, error) {
 	if !info.Installed {
 		return info, nil
 	}
-	if out, err := iruntime.RunOutput(ctx, binary, "--version"); err == nil {
+	if out, err := exec.CommandContext(ctx, binary, "--version").Output(); err == nil {
 		re := regexp.MustCompile(`(\d+\.\d+\.\d+)`)
 		if m := re.FindStringSubmatch(string(out)); len(m) > 1 {
 			info.Version = m[1]
@@ -42,7 +43,7 @@ func (r *Runtime) Detect(ctx context.Context) (aime.RuntimeInfo, error) {
 	} else {
 		info.AuthStatus = aime.AuthLoggedOut
 	}
-	if out, err := iruntime.RunOutput(ctx, binary, "models"); err == nil {
+	if out, err := exec.CommandContext(ctx, binary, "models").Output(); err == nil {
 		for _, line := range strings.Split(string(out), "\n") {
 			id := strings.TrimSpace(line)
 			if id != "" && strings.Contains(id, "/") {
@@ -53,6 +54,6 @@ func (r *Runtime) Detect(ctx context.Context) (aime.RuntimeInfo, error) {
 	return info, nil
 }
 
-func (r *Runtime) Start(ctx context.Context, input aime.SessionInput) (aime.Session, error) {
+func (r *Runtime) SpawnSession(ctx context.Context, input aime.SessionInput) (aime.Session, error) {
 	return newSession(ctx, r, input)
 }

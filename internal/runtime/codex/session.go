@@ -1,0 +1,362 @@
+package codex
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os/exec"
+	"sync"
+	"sync/atomic"
+	"syscall"
+
+	iruntime "github.com/git-hulk/aime/internal/runtime"
+	aime "github.com/git-hulk/aime/pkg"
+)
+
+type session struct {
+	input aime.SessionInput
+
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+
+	events chan aime.Event
+
+	cancelCtx context.CancelFunc
+	promptCh  chan string
+	doneCh    chan struct{}
+	doneOnce  sync.Once
+	wg        sync.WaitGroup
+	nextID    atomic.Int64
+	threadID  string
+	mu        sync.Mutex
+	sessionID string
+	state     aime.State
+}
+
+var _ aime.Session = (*session)(nil)
+
+func newSession(ctx context.Context, rt *Runtime, input aime.SessionInput) (aime.Session, error) {
+	input = iruntime.NormalizeInput(input)
+	runCtx, cancel := context.WithCancel(context.Background())
+	cmd := exec.CommandContext(runCtx, iruntime.BinaryPath(rt.cfg, "codex"), "app-server", "--listen", "stdio://")
+	cmd.Dir = input.WorkingDir
+	cmd.Env = iruntime.CommandEnv(input, rt.cfg)
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		cancel()
+		return nil, err
+	}
+
+	s := &session{
+		input:     input,
+		cmd:       cmd,
+		stdin:     stdin,
+		events:    make(chan aime.Event, 1024),
+		cancelCtx: cancel,
+		promptCh:  make(chan string, 16),
+		doneCh:    make(chan struct{}),
+		sessionID: input.SessionID,
+		state:     aime.StateRunning,
+	}
+	iruntime.Emit(s.events, s.doneCh, aime.Event{Type: aime.EventState, Runtime: aime.RuntimeCodex, SessionID: input.SessionID, State: aime.StateRunning})
+	if err := s.start(ctx, stdout, stderr); err != nil {
+		_ = cmd.Process.Kill()
+		cancel()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *session) start(ctx context.Context, stdout io.Reader, stderr io.Reader) error {
+	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	if err := s.initialize(scanner); err != nil {
+		return err
+	}
+
+	s.wg.Add(2)
+	go func() {
+		defer s.wg.Done()
+		s.readStdout(scanner)
+	}()
+	go func() {
+		defer s.wg.Done()
+		s.readStderr(stderr)
+	}()
+	go s.wait()
+	go s.consumePrompts()
+
+	if s.input.Prompt != "" {
+		if err := s.Send(ctx, s.input.Prompt); err != nil {
+			_ = s.Cancel(ctx)
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *session) Send(ctx context.Context, prompt string) error {
+	if prompt == "" {
+		return nil
+	}
+	select {
+	case s.promptCh <- prompt:
+		return nil
+	case <-s.doneCh:
+		return iruntime.ErrSessionClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *session) Events() <-chan aime.Event {
+	return s.events
+}
+
+func (s *session) Cancel(ctx context.Context) error {
+	s.doneOnce.Do(func() {
+		s.mu.Lock()
+		s.state = aime.StateCanceled
+		s.mu.Unlock()
+		iruntime.Emit(s.events, nil, aime.Event{Type: aime.EventState, Runtime: aime.RuntimeCodex, SessionID: s.sessionID, State: aime.StateCanceled})
+		close(s.doneCh)
+		s.cancelCtx()
+		if s.cmd != nil && s.cmd.Process != nil {
+			_ = s.cmd.Process.Signal(syscall.SIGTERM)
+		}
+	})
+	return nil
+}
+
+func (s *session) nextRequestID() int64 {
+	return s.nextID.Add(1)
+}
+
+func (s *session) initialize(scanner *bufio.Scanner) error {
+	initID := s.nextRequestID()
+	if err := iruntime.WriteJSONLine(s.stdin, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      initID,
+		"method":  "initialize",
+		"params": map[string]any{
+			"clientInfo": map[string]string{"name": "aime", "version": "0.1.0"},
+		},
+	}); err != nil {
+		return fmt.Errorf("send initialize: %w", err)
+	}
+	if _, err := s.readJSONRPCResponse(scanner, initID, false); err != nil {
+		return fmt.Errorf("initialize: %w", err)
+	}
+	if err := iruntime.WriteJSONLine(s.stdin, map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "initialized",
+	}); err != nil {
+		return fmt.Errorf("send initialized: %w", err)
+	}
+
+	threadID := s.nextRequestID()
+	params := map[string]any{
+		"cwd":            s.input.WorkingDir,
+		"approvalPolicy": string(s.input.Permission),
+		"sandbox":        string(s.input.Sandbox),
+	}
+	if params["approvalPolicy"] == "" {
+		params["approvalPolicy"] = "never"
+	}
+	if params["sandbox"] == "" {
+		params["sandbox"] = "danger-full-access"
+	}
+	if s.input.Model != "" {
+		params["model"] = s.input.Model
+	}
+	if err := iruntime.WriteJSONLine(s.stdin, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      threadID,
+		"method":  "thread/start",
+		"params":  params,
+	}); err != nil {
+		return fmt.Errorf("send thread/start: %w", err)
+	}
+	result, err := s.readJSONRPCResponse(scanner, threadID, true)
+	if err != nil {
+		return fmt.Errorf("thread/start: %w", err)
+	}
+	var resp struct {
+		Thread struct {
+			ID string `json:"id"`
+		} `json:"thread"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return fmt.Errorf("parse thread/start: %w", err)
+	}
+	if resp.Thread.ID == "" {
+		return fmt.Errorf("thread/start returned empty thread id")
+	}
+	s.threadID = resp.Thread.ID
+	s.sessionID = resp.Thread.ID
+	return nil
+}
+
+func (s *session) consumePrompts() {
+	for {
+		select {
+		case <-s.doneCh:
+			return
+		case prompt := <-s.promptCh:
+			turnID := s.nextRequestID()
+			req := map[string]any{
+				"jsonrpc": "2.0",
+				"id":      turnID,
+				"method":  "turn/start",
+				"params": map[string]any{
+					"threadId": s.threadID,
+					"input": []map[string]string{
+						{"type": "text", "text": prompt},
+					},
+				},
+			}
+			if err := iruntime.WriteJSONLine(s.stdin, req); err != nil {
+				iruntime.Emit(s.events, s.doneCh, aime.Event{
+					Type:      aime.EventError,
+					Runtime:   aime.RuntimeCodex,
+					SessionID: s.sessionID,
+					Error:     fmt.Sprintf("send turn/start: %v", err),
+				})
+			}
+		}
+	}
+}
+
+func (s *session) readStdout(scanner *bufio.Scanner) {
+	for scanner.Scan() {
+		line := append([]byte(nil), scanner.Bytes()...)
+		var raw json.RawMessage
+		if err := json.Unmarshal(line, &raw); err != nil {
+			iruntime.Emit(s.events, s.doneCh, aime.Event{Type: aime.EventError, Runtime: aime.RuntimeCodex, SessionID: s.sessionID, Error: fmt.Sprintf("decode stdout: %v", err)})
+			continue
+		}
+		ev, ok := ParseEvent(raw)
+		if !ok {
+			ev = aime.Event{Type: aime.EventRaw}
+		}
+		s.emitEvent(raw, ev)
+	}
+	if err := scanner.Err(); err != nil {
+		iruntime.Emit(s.events, s.doneCh, aime.Event{Type: aime.EventError, Runtime: aime.RuntimeCodex, SessionID: s.sessionID, Error: fmt.Sprintf("read stdout: %v", err)})
+	}
+}
+
+func (s *session) readStderr(r io.Reader) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	for scanner.Scan() {
+		iruntime.Emit(s.events, s.doneCh, aime.Event{
+			Type:      aime.EventStderr,
+			Runtime:   aime.RuntimeCodex,
+			SessionID: s.sessionID,
+			Error:     scanner.Text(),
+		})
+	}
+	if err := scanner.Err(); err != nil {
+		iruntime.Emit(s.events, s.doneCh, aime.Event{
+			Type:      aime.EventError,
+			Runtime:   aime.RuntimeCodex,
+			SessionID: s.sessionID,
+			Error:     fmt.Sprintf("read stderr: %v", err),
+		})
+	}
+}
+
+func (s *session) readJSONRPCResponse(scanner *bufio.Scanner, requestID int64, forward bool) (json.RawMessage, error) {
+	for scanner.Scan() {
+		line := append([]byte(nil), scanner.Bytes()...)
+		var msg struct {
+			ID     *json.RawMessage `json:"id"`
+			Result json.RawMessage  `json:"result"`
+			Error  *struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(line, &msg); err != nil {
+			continue
+		}
+		if msg.ID != nil {
+			var id int64
+			if json.Unmarshal(*msg.ID, &id) == nil && id == requestID {
+				if msg.Error != nil {
+					return nil, fmt.Errorf("JSON-RPC error %d: %s", msg.Error.Code, msg.Error.Message)
+				}
+				return msg.Result, nil
+			}
+		}
+		if forward {
+			var raw json.RawMessage
+			if json.Unmarshal(line, &raw) == nil {
+				ev, ok := ParseEvent(raw)
+				if !ok {
+					ev = aime.Event{Type: aime.EventRaw}
+				}
+				s.emitEvent(raw, ev)
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return nil, fmt.Errorf("stdout closed before response %d", requestID)
+}
+
+func (s *session) emitEvent(raw json.RawMessage, ev aime.Event) {
+	ev.Runtime = aime.RuntimeCodex
+	ev.SessionID = s.sessionID
+	ev.Raw = raw
+	iruntime.Emit(s.events, s.doneCh, ev)
+}
+
+func (s *session) wait() {
+	err := s.cmd.Wait()
+	s.wg.Wait()
+	code := iruntime.ExitCode(err)
+	s.mu.Lock()
+	canceled := s.state == aime.StateCanceled
+	s.mu.Unlock()
+	if !canceled {
+		state := aime.StateCompleted
+		if code != 0 {
+			state = aime.StateFailed
+		}
+		s.mu.Lock()
+		s.state = state
+		s.mu.Unlock()
+		iruntime.Emit(s.events, nil, aime.Event{
+			Type:      aime.EventState,
+			Runtime:   aime.RuntimeCodex,
+			SessionID: s.sessionID,
+			State:     state,
+			ExitCode:  &code,
+		})
+	}
+	s.doneOnce.Do(func() {
+		close(s.doneCh)
+	})
+	close(s.events)
+}

@@ -10,7 +10,7 @@ import (
 
 type eventParser struct{}
 
-func ParseEvent(raw json.RawMessage) []aime.Event {
+func ParseEvent(raw json.RawMessage) (aime.Event, bool) {
 	return eventParser{}.parse(raw)
 }
 
@@ -50,47 +50,47 @@ func (eventParser) captureSession(raw json.RawMessage) string {
 	return ""
 }
 
-func (p eventParser) parse(raw json.RawMessage) []aime.Event {
+func (p eventParser) parse(raw json.RawMessage) (aime.Event, bool) {
 	var ev event
 	if json.Unmarshal(raw, &ev) != nil {
-		return nil
+		return aime.Event{}, false
 	}
 	if ev.Type == "step_finish" {
-		return p.stepFinishEvents(ev)
+		return p.stepFinishEvent(ev)
 	}
 	if ev.Part == nil {
-		return nil
+		return aime.Event{}, false
 	}
 	switch ev.Part.Type {
 	case "text":
 		if ev.Part.Text != "" {
-			return []aime.Event{{Type: aime.EventText, Text: ev.Part.Text}}
+			return aime.Event{Type: aime.EventText, Text: ev.Part.Text}, true
 		}
 	case "reasoning":
 		params := []string{}
 		if summary := reasoningSummary(ev.Part.Text); summary != "" {
 			params = append(params, summary)
 		}
-		return []aime.Event{{Type: aime.EventActivity, Activity: &aime.Activity{Type: aime.ActivityReasoning, Parameters: params}}}
+		return aime.Event{Type: aime.EventActivity, Activity: &aime.Activity{Type: aime.ActivityReasoning, Parameters: params}}, true
 	case "tool":
-		return p.toolEvents(ev.Part)
+		return p.toolEvent(ev.Part)
 	}
-	return nil
+	return aime.Event{}, false
 }
 
-func (eventParser) stepFinishEvents(ev event) []aime.Event {
+func (eventParser) stepFinishEvent(ev event) (aime.Event, bool) {
 	if ev.Part == nil {
-		return []aime.Event{{Type: aime.EventDone}}
+		return aime.Event{Type: aime.EventDone}, true
 	}
 	switch ev.Part.Reason {
 	case "", "stop", "length", "error":
-		return []aime.Event{{Type: aime.EventDone}}
+		return aime.Event{Type: aime.EventDone}, true
 	default:
-		return nil
+		return aime.Event{}, false
 	}
 }
 
-func (eventParser) toolEvents(part *part) []aime.Event {
+func (eventParser) toolEvent(part *part) (aime.Event, bool) {
 	toolName := part.Tool
 	if toolName == "" && part.State != nil {
 		toolName = part.State.Title
@@ -99,24 +99,16 @@ func (eventParser) toolEvents(part *part) []aime.Event {
 	if input == nil && part.State != nil {
 		input = part.State.Input
 	}
-	params := []string{toolName}
-	if summary := iruntime.StringMapSummary(input); summary != "" {
-		params = append(params, summary)
-	}
-	out := []aime.Event{
-		{Type: aime.EventActivity, Activity: &aime.Activity{Type: aime.ActivityToolCall, Parameters: params}},
-		{Type: aime.EventToolCall, ToolCall: &aime.ToolCall{ID: part.CallID, Name: toolName, Input: input}},
-	}
 	if part.State != nil && (part.State.Status == "completed" || part.State.Status == "error") {
 		content := part.State.Output
 		if content == "" {
 			content = part.State.Error
 		}
 		if content != "" {
-			out = append(out, aime.Event{Type: aime.EventToolResult, ToolResult: &aime.ToolResult{ToolCallID: part.CallID, Content: content}})
+			return aime.Event{Type: aime.EventToolResult, ToolResult: &aime.ToolResult{ToolCallID: part.CallID, Content: content}}, true
 		}
 	}
-	return out
+	return aime.Event{Type: aime.EventToolCall, ToolCall: &aime.ToolCall{ID: part.CallID, Name: toolName, Input: input}}, true
 }
 
 func reasoningSummary(text string) string {

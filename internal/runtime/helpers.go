@@ -1,8 +1,6 @@
 package runtime
 
 import (
-	"bufio"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -41,17 +39,6 @@ func CommandEnv(input aime.SessionInput, cfg aime.Config) []string {
 	return env
 }
 
-func RunOutput(ctx context.Context, binary string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, binary, args...)
-	return cmd.Output()
-}
-
-func ScannerFor(r io.Reader) *bufio.Scanner {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	return scanner
-}
-
 func Emit(events chan<- aime.Event, done <-chan struct{}, ev aime.Event) (ok bool) {
 	defer func() {
 		if recover() != nil {
@@ -78,29 +65,6 @@ func Emit(events chan<- aime.Event, done <-chan struct{}, ev aime.Event) (ok boo
 	case <-done:
 		return false
 	}
-}
-
-func DecorateEvents(events []aime.Event, kind aime.RuntimeKind, sessionID string, raw json.RawMessage) []aime.Event {
-	out := make([]aime.Event, 0, len(events)+1)
-	out = append(out, aime.Event{
-		Type:      aime.EventRaw,
-		Runtime:   kind,
-		SessionID: sessionID,
-		Raw:       raw,
-	})
-	for _, ev := range events {
-		if ev.Runtime == "" {
-			ev.Runtime = kind
-		}
-		if ev.SessionID == "" {
-			ev.SessionID = sessionID
-		}
-		if len(ev.Raw) == 0 {
-			ev.Raw = raw
-		}
-		out = append(out, ev)
-	}
-	return out
 }
 
 func ExitCode(err error) int {

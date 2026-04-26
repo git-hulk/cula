@@ -35,12 +35,12 @@ func (r *Registry) Runtime(kind RuntimeKind) (Runtime, bool) {
 	return rt, ok
 }
 
-func (r *Registry) Start(ctx context.Context, input SessionInput) (Session, error) {
+func (r *Registry) SpawnSession(ctx context.Context, input SessionInput) (Session, error) {
 	rt, ok := r.Runtime(input.Runtime)
 	if !ok {
 		return nil, fmt.Errorf("runtime %q is not registered", input.Runtime)
 	}
-	return rt.Start(ctx, input)
+	return rt.SpawnSession(ctx, input)
 }
 
 func (r *Registry) DetectAll(ctx context.Context) []RuntimeInfo {

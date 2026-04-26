@@ -1,6 +1,7 @@
 package opencode
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -84,7 +85,7 @@ func (s *session) Cancel(ctx context.Context) error {
 		iruntime.Emit(s.events, nil, aime.Event{
 			Type:      aime.EventState,
 			Runtime:   aime.RuntimeOpenCode,
-			SessionID: s.currentSessionID(),
+			SessionID: s.sessionID,
 			State:     aime.StateCanceled,
 			ExitCode:  &exit,
 		})
@@ -101,12 +102,6 @@ func (s *session) Cancel(ctx context.Context) error {
 	return nil
 }
 
-func (s *session) currentSessionID() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.sessionID
-}
-
 func (s *session) consumePrompts() {
 	for {
 		select {
@@ -117,7 +112,7 @@ func (s *session) consumePrompts() {
 				iruntime.Emit(s.events, s.doneCh, aime.Event{
 					Type:      aime.EventState,
 					Runtime:   aime.RuntimeOpenCode,
-					SessionID: s.currentSessionID(),
+					SessionID: s.sessionID,
 					State:     aime.StateFailed,
 					ExitCode:  &exit,
 				})
@@ -129,8 +124,7 @@ func (s *session) consumePrompts() {
 }
 
 func (s *session) spawnAndWait(prompt string) int {
-	sessionID := s.currentSessionID()
-	args := s.buildArgs(sessionID, prompt)
+	args := s.buildArgs(s.sessionID, prompt)
 	cmd := exec.CommandContext(s.ctx, iruntime.BinaryPath(s.runtime.cfg, "opencode"), args...)
 	cmd.Dir = s.input.WorkingDir
 	cmd.Env = iruntime.CommandEnv(s.input, s.runtime.cfg)
@@ -177,7 +171,7 @@ func (s *session) spawnAndWait(prompt string) int {
 		iruntime.Emit(s.events, s.doneCh, aime.Event{
 			Type:      aime.EventDone,
 			Runtime:   aime.RuntimeOpenCode,
-			SessionID: s.currentSessionID(),
+			SessionID: s.sessionID,
 		})
 	}
 	return exitCode
@@ -198,7 +192,8 @@ func (s *session) buildArgs(sessionID, prompt string) []string {
 }
 
 func (s *session) readStdout(r io.Reader) {
-	scanner := iruntime.ScannerFor(r)
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	for scanner.Scan() {
 		line := append([]byte(nil), scanner.Bytes()...)
 		var raw json.RawMessage
@@ -207,13 +202,13 @@ func (s *session) readStdout(r io.Reader) {
 			continue
 		}
 		if id := s.parser.captureSession(raw); id != "" {
-			s.mu.Lock()
 			s.sessionID = id
-			s.mu.Unlock()
 		}
-		for _, ev := range iruntime.DecorateEvents(ParseEvent(raw), aime.RuntimeOpenCode, s.currentSessionID(), raw) {
-			iruntime.Emit(s.events, s.doneCh, ev)
+		ev, ok := ParseEvent(raw)
+		if !ok {
+			ev = aime.Event{Type: aime.EventRaw}
 		}
+		s.emitEvent(raw, ev)
 	}
 	if err := scanner.Err(); err != nil {
 		s.emitError(fmt.Sprintf("read stdout: %v", err))
@@ -221,12 +216,13 @@ func (s *session) readStdout(r io.Reader) {
 }
 
 func (s *session) readStderr(r io.Reader) {
-	scanner := iruntime.ScannerFor(r)
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	for scanner.Scan() {
 		iruntime.Emit(s.events, s.doneCh, aime.Event{
 			Type:      aime.EventStderr,
 			Runtime:   aime.RuntimeOpenCode,
-			SessionID: s.currentSessionID(),
+			SessionID: s.sessionID,
 			Error:     scanner.Text(),
 		})
 	}
@@ -235,11 +231,18 @@ func (s *session) readStderr(r io.Reader) {
 	}
 }
 
+func (s *session) emitEvent(raw json.RawMessage, ev aime.Event) {
+	ev.Runtime = aime.RuntimeOpenCode
+	ev.SessionID = s.sessionID
+	ev.Raw = raw
+	iruntime.Emit(s.events, s.doneCh, ev)
+}
+
 func (s *session) emitError(message string) {
 	iruntime.Emit(s.events, s.doneCh, aime.Event{
 		Type:      aime.EventError,
 		Runtime:   aime.RuntimeOpenCode,
-		SessionID: s.currentSessionID(),
+		SessionID: s.sessionID,
 		Error:     message,
 	})
 }

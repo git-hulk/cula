@@ -10,7 +10,7 @@ import (
 
 type eventParser struct{}
 
-func ParseEvent(raw json.RawMessage) []aime.Event {
+func ParseEvent(raw json.RawMessage) (aime.Event, bool) {
 	return eventParser{}.parse(raw)
 }
 
@@ -50,84 +50,77 @@ func (eventParser) captureSession(raw json.RawMessage) string {
 	return ""
 }
 
-func (p eventParser) parse(raw json.RawMessage) []aime.Event {
+func (p eventParser) parse(raw json.RawMessage) (aime.Event, bool) {
 	var ev event
 	if json.Unmarshal(raw, &ev) != nil {
-		return nil
+		return aime.Event{}, false
 	}
-	var out []aime.Event
 	switch ev.Type {
 	case "result":
-		return []aime.Event{{Type: aime.EventDone}}
+		return aime.Event{Type: aime.EventDone}, true
 	case "assistant":
-		out = append(out, p.assistantEvents(ev)...)
+		if out, ok := p.assistantEvent(ev); ok {
+			return out, true
+		}
 	case "user":
-		out = append(out, p.toolResultEvents(ev)...)
+		if out, ok := p.toolResultEvent(ev); ok {
+			return out, true
+		}
 	}
 	if ev.Role == "assistant" {
 		if text, ok := ev.Content.AsString(); ok && strings.TrimSpace(text) != "" {
-			out = append(out, aime.Event{Type: aime.EventText, Text: text})
+			return aime.Event{Type: aime.EventText, Text: text}, true
 		}
 	}
 	for _, b := range contentBlocks(ev.Content) {
-		out = append(out, toolResultBlockEvent(b)...)
+		if out, ok := toolResultBlockEvent(b); ok {
+			return out, true
+		}
 	}
-	return out
+	return aime.Event{}, false
 }
 
-func (eventParser) assistantEvents(ev event) []aime.Event {
+func (eventParser) assistantEvent(ev event) (aime.Event, bool) {
 	if ev.Message == nil {
-		return nil
+		return aime.Event{}, false
 	}
-	var out []aime.Event
-	hasToolUse := false
 	for _, b := range ev.Message.Content {
 		switch b.Type {
 		case "thinking":
-			out = append(out, aime.Event{Type: aime.EventActivity, Activity: &aime.Activity{Type: aime.ActivityThinking}})
+			return aime.Event{Type: aime.EventActivity, Activity: &aime.Activity{Type: aime.ActivityThinking}}, true
 		case "tool_use":
-			hasToolUse = true
-			params := []string{b.Name}
-			if summary := iruntime.StringMapSummary(b.Input); summary != "" {
-				params = append(params, summary)
-			}
-			out = append(out,
-				aime.Event{Type: aime.EventActivity, Activity: &aime.Activity{Type: aime.ActivityToolCall, Parameters: params}},
-				aime.Event{Type: aime.EventToolCall, ToolCall: &aime.ToolCall{ID: b.ID, Name: b.Name, Input: b.Input}},
-			)
+			return aime.Event{Type: aime.EventToolCall, ToolCall: &aime.ToolCall{ID: b.ID, Name: b.Name, Input: b.Input}}, true
 		}
-	}
-	if hasToolUse {
-		return out
 	}
 	for _, b := range ev.Message.Content {
 		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-			out = append(out, aime.Event{Type: aime.EventText, Text: b.Text})
+			return aime.Event{Type: aime.EventText, Text: b.Text}, true
 		}
 	}
-	return out
+	return aime.Event{}, false
 }
 
-func (eventParser) toolResultEvents(ev event) []aime.Event {
+func (eventParser) toolResultEvent(ev event) (aime.Event, bool) {
 	if ev.Message == nil {
-		return nil
+		return aime.Event{}, false
 	}
-	var out []aime.Event
 	for _, b := range ev.Message.Content {
-		out = append(out, toolResultBlockEvent(b)...)
+		if out, ok := toolResultBlockEvent(b); ok {
+			return out, true
+		}
 	}
-	return out
+	return aime.Event{}, false
 }
 
-func toolResultBlockEvent(b block) []aime.Event {
+func toolResultBlockEvent(b block) (aime.Event, bool) {
 	if b.Type != "tool_result" || b.ToolUseID == "" {
-		return nil
+		return aime.Event{}, false
 	}
 	text := b.Content.AsText()
 	if text == "" {
-		return nil
+		return aime.Event{}, false
 	}
-	return []aime.Event{{Type: aime.EventToolResult, ToolResult: &aime.ToolResult{ToolCallID: b.ToolUseID, Content: text}}}
+	return aime.Event{Type: aime.EventToolResult, ToolResult: &aime.ToolResult{ToolCallID: b.ToolUseID, Content: text}}, true
 }
 
 func contentBlocks(content iruntime.RawValue) []block {

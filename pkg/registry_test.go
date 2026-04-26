@@ -17,7 +17,7 @@ func (s stubRuntime) Detect(ctx context.Context) (pkg.RuntimeInfo, error) {
 	return pkg.RuntimeInfo{Kind: s.kind, Name: string(s.kind), Installed: true, AuthStatus: pkg.AuthLoggedIn}, nil
 }
 
-func (s stubRuntime) Start(ctx context.Context, input pkg.SessionInput) (pkg.Session, error) {
+func (s stubRuntime) SpawnSession(ctx context.Context, input pkg.SessionInput) (pkg.Session, error) {
 	return nil, nil
 }
 

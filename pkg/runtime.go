@@ -10,10 +10,17 @@ const (
 	RuntimeOpenCode   RuntimeKind = "opencode"
 )
 
+const (
+	AuthLoggedIn     AuthStatus = "logged_in"
+	AuthLoggedOut    AuthStatus = "logged_out"
+	AuthNotInstalled AuthStatus = "not_installed"
+	AuthUnknown      AuthStatus = "unknown"
+)
+
 type Runtime interface {
 	Kind() RuntimeKind
 	Detect(ctx context.Context) (RuntimeInfo, error)
-	Start(ctx context.Context, input SessionInput) (Session, error)
+	SpawnSession(ctx context.Context, input SessionInput) (Session, error)
 }
 
 type RuntimeInfo struct {
@@ -27,13 +34,6 @@ type RuntimeInfo struct {
 }
 
 type AuthStatus string
-
-const (
-	AuthLoggedIn     AuthStatus = "logged_in"
-	AuthLoggedOut    AuthStatus = "logged_out"
-	AuthNotInstalled AuthStatus = "not_installed"
-	AuthUnknown      AuthStatus = "unknown"
-)
 
 type Model struct {
 	ID   string `json:"id"`

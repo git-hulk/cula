@@ -18,32 +18,23 @@ func rawJSON(t *testing.T, s string) json.RawMessage {
 
 func TestParseEventStructuredActivity(t *testing.T) {
 	started := rawJSON(t, `{"method":"item/started","params":{"item":{"id":"call-1","type":"functionCall","name":"apply_patch","arguments":"{\"path\":\"types.go\"}"}}}`)
-	events := ParseEvent(started)
-	if len(events) != 2 {
-		t.Fatalf("events len = %d, want 2: %#v", len(events), events)
-	}
-	if events[0].Activity == nil || events[0].Activity.Type != aime.ActivityToolCall {
-		t.Fatalf("activity = %#v", events[0].Activity)
-	}
-	if got := events[0].Activity.Parameters; len(got) != 2 || got[0] != "apply_patch" || got[1] != "types.go" {
-		t.Fatalf("activity params = %#v", got)
-	}
-	if events[1].ToolCall == nil || events[1].ToolCall.Name != "apply_patch" {
-		t.Fatalf("tool call = %#v", events[1].ToolCall)
+	ev, ok := ParseEvent(started)
+	if !ok || ev.Type != aime.EventToolCall || ev.ToolCall == nil || ev.ToolCall.Name != "apply_patch" {
+		t.Fatalf("tool event = %#v, %v", ev, ok)
 	}
 
 	commandDone := rawJSON(t, `{"method":"item/completed","params":{"item":{"type":"commandExecution","command":"go test ./...","exitCode":0}}}`)
-	events = ParseEvent(commandDone)
-	if len(events) != 1 || events[0].Activity == nil || events[0].Activity.Type != aime.ActivityCommand {
-		t.Fatalf("command events = %#v", events)
+	ev, ok = ParseEvent(commandDone)
+	if !ok || ev.Activity == nil || ev.Activity.Type != aime.ActivityCommand {
+		t.Fatalf("command event = %#v, %v", ev, ok)
 	}
-	if got := events[0].Activity.Parameters; len(got) != 2 || got[0] != "go test ./..." || got[1] != "0" {
+	if got := ev.Activity.Parameters; len(got) != 2 || got[0] != "go test ./..." || got[1] != "0" {
 		t.Fatalf("command params = %#v", got)
 	}
 
 	done := rawJSON(t, `{"method":"turn/completed","params":{"turn":{"status":"completed"}}}`)
-	events = ParseEvent(done)
-	if len(events) != 1 || events[0].Type != aime.EventDone {
-		t.Fatalf("done events = %#v", events)
+	ev, ok = ParseEvent(done)
+	if !ok || ev.Type != aime.EventDone {
+		t.Fatalf("done event = %#v, %v", ev, ok)
 	}
 }
