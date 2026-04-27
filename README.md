@@ -12,6 +12,18 @@ Use it to talk to whichever agent the user has installed without writing per-CLI
 - **Detection built in.** Discover which runtimes are installed, their versions, auth status, and available models before you spawn anything.
 - **Composable.** Use the `pkg` library headlessly to build your own routers, daemons, or HTTP bridges. Use the bundled TUI when you want an interactive UI for free.
 
+## Demo
+
+![cula TUI demo](docs/screenshots/cula-demo.gif)
+
+The bundled `cula` TUI is a reference example, not the product. It exists to show how the library wires multiple agents into a single UI:
+
+- **Detect** which runtimes are installed and pick one (Claude Code / Codex / OpenCode) from a single picker.
+- **Configure** the working directory and model, then **spawn** a session through the same `Registry` regardless of which CLI backs it.
+- **Render** the normalized event stream — assistant text, reasoning, tool calls, activity, and state transitions — in one consistent chat view, so every runtime looks and behaves the same.
+
+If you want a chat UI over local agents, use it as-is. If you're building something else (router, daemon, IDE plugin), treat it as a worked example of how to consume `pkg` and adapt the same pattern to your surface.
+
 ## Install
 
 ```bash
