@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	aime "github.com/git-hulk/aime/pkg"
+	cula "github.com/git-hulk/cula/pkg"
 )
 
 var ErrSessionClosed = errors.New("session is closed")
 
-func NormalizeInput(input aime.SessionInput) aime.SessionInput {
+func NormalizeInput(input cula.SessionInput) cula.SessionInput {
 	if input.WorkingDir == "" {
 		if wd, err := os.Getwd(); err == nil {
 			input.WorkingDir = wd
@@ -25,21 +25,21 @@ func NormalizeInput(input aime.SessionInput) aime.SessionInput {
 	return input
 }
 
-func BinaryPath(cfg aime.Config, fallback string) string {
+func BinaryPath(cfg cula.Config, fallback string) string {
 	if cfg.BinaryPath != "" {
 		return cfg.BinaryPath
 	}
 	return fallback
 }
 
-func CommandEnv(input aime.SessionInput, cfg aime.Config) []string {
+func CommandEnv(input cula.SessionInput, cfg cula.Config) []string {
 	env := os.Environ()
 	env = append(env, cfg.Env...)
 	env = append(env, input.Env...)
 	return env
 }
 
-func Emit(events chan<- aime.Event, done <-chan struct{}, ev aime.Event) (ok bool) {
+func Emit(events chan<- cula.Event, done <-chan struct{}, ev cula.Event) (ok bool) {
 	defer func() {
 		if recover() != nil {
 			ok = false
@@ -78,11 +78,11 @@ func ExitCode(err error) int {
 	return 1
 }
 
-func LookupRuntime(binary, name string, kind aime.RuntimeKind, displayName string) aime.RuntimeInfo {
-	info := aime.RuntimeInfo{
+func LookupRuntime(binary, name string, kind cula.RuntimeKind, displayName string) cula.RuntimeInfo {
+	info := cula.RuntimeInfo{
 		Kind:       kind,
 		Name:       displayName,
-		AuthStatus: aime.AuthNotInstalled,
+		AuthStatus: cula.AuthNotInstalled,
 	}
 	if binary == "" {
 		binary = name
@@ -90,12 +90,12 @@ func LookupRuntime(binary, name string, kind aime.RuntimeKind, displayName strin
 	if path, err := exec.LookPath(binary); err == nil {
 		info.Installed = true
 		info.BinaryPath = path
-		info.AuthStatus = aime.AuthUnknown
+		info.AuthStatus = cula.AuthUnknown
 	} else if filepath.IsAbs(binary) {
 		if st, statErr := os.Stat(binary); statErr == nil && !st.IsDir() {
 			info.Installed = true
 			info.BinaryPath = binary
-			info.AuthStatus = aime.AuthUnknown
+			info.AuthStatus = cula.AuthUnknown
 		}
 	}
 	return info

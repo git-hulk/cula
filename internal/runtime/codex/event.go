@@ -5,13 +5,13 @@ import (
 	"fmt"
 	"strings"
 
-	iruntime "github.com/git-hulk/aime/internal/runtime"
-	aime "github.com/git-hulk/aime/pkg"
+	iruntime "github.com/git-hulk/cula/internal/runtime"
+	cula "github.com/git-hulk/cula/pkg"
 )
 
 type eventParser struct{}
 
-func ParseEvent(raw json.RawMessage) (aime.Event, bool) {
+func ParseEvent(raw json.RawMessage) (cula.Event, bool) {
 	return eventParser{}.parse(raw)
 }
 
@@ -30,33 +30,29 @@ type turn struct {
 }
 
 type item struct {
-	ID        string           `json:"id"`
-	Type      string           `json:"type"`
-	Name      string           `json:"name"`
-	Text      string           `json:"text"`
-	Command   string           `json:"command"`
-	ExitCode  *float64         `json:"exitCode"`
-	Arguments string           `json:"arguments"`
-	Summary   []reasoningBlock `json:"summary"`
-	Input     map[string]any   `json:"input"`
-	Metadata  map[string]any   `json:"metadata"`
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
+	Name      string         `json:"name"`
+	Text      string         `json:"text"`
+	Phase     string         `json:"phase"`
+	Command   string         `json:"command"`
+	ExitCode  *float64       `json:"exitCode"`
+	Arguments string         `json:"arguments"`
+	Input     map[string]any `json:"input"`
+	Metadata  map[string]any `json:"metadata"`
 }
 
-type reasoningBlock struct {
-	Text string `json:"text"`
-}
-
-func (p eventParser) parse(raw json.RawMessage) (aime.Event, bool) {
+func (p eventParser) parse(raw json.RawMessage) (cula.Event, bool) {
 	var ev event
 	if json.Unmarshal(raw, &ev) != nil || ev.Method == "" {
-		return aime.Event{}, false
+		return cula.Event{}, false
 	}
 	switch ev.Method {
 	case "turn/completed":
 		if ev.Params.Turn == nil || ev.Params.Turn.Status == "" {
-			return aime.Event{}, false
+			return cula.Event{}, false
 		}
-		return aime.Event{Type: aime.EventDone}, true
+		return cula.Event{Type: cula.EventDone}, true
 	case "item/started":
 		if ev.Params.Item != nil {
 			return p.itemEvent(ev.Params.Item, false)
@@ -66,36 +62,40 @@ func (p eventParser) parse(raw json.RawMessage) (aime.Event, bool) {
 			return p.completedItemEvent(ev.Params.Item)
 		}
 	}
-	return aime.Event{}, false
+	return cula.Event{}, false
 }
 
-func (p eventParser) completedItemEvent(item *item) (aime.Event, bool) {
+func (p eventParser) completedItemEvent(item *item) (cula.Event, bool) {
 	if item.Type == "agentMessage" && strings.TrimSpace(item.Text) != "" {
-		return aime.Event{Type: aime.EventText, Text: item.Text}, true
+		// Codex tags mid-turn preamble/progress narration as "commentary"
+		// and the terminal reply as "final_answer". Surface commentary as
+		// an activity narration row so it groups under the assistant
+		// banner and gets cleared at turn end alongside other progress
+		// indicators, instead of stacking inside the final answer bubble.
+		if item.Phase == "commentary" {
+			return cula.Event{Type: cula.EventActivity, Activity: &cula.Activity{Type: cula.ActivityNarration, Parameters: []string{item.Text}}}, true
+		}
+		return cula.Event{Type: cula.EventText, Text: item.Text}, true
 	}
 	return p.itemEvent(item, true)
 }
 
-func (eventParser) itemEvent(item *item, completed bool) (aime.Event, bool) {
+func (eventParser) itemEvent(item *item, completed bool) (cula.Event, bool) {
 	switch item.Type {
 	case "reasoning":
-		if !completed {
-			return aime.Event{Type: aime.EventActivity, Activity: &aime.Activity{Type: aime.ActivityThinking}}, true
+		if completed {
+			return cula.Event{}, false
 		}
-		for _, summary := range item.Summary {
-			if text := reasoningSummary(summary.Text); text != "" {
-				return aime.Event{Type: aime.EventActivity, Activity: &aime.Activity{Type: aime.ActivityReasoning, Parameters: []string{text}}}, true
-			}
-		}
+		return cula.Event{Type: cula.EventActivity, Activity: &cula.Activity{Type: cula.ActivityThinking}}, true
 	case "functionCall", "tool_call":
 		input := item.Input
 		if input == nil {
 			input = iruntime.ParseArguments(item.Arguments)
 		}
 		if !completed {
-			return aime.Event{Type: aime.EventToolCall, ToolCall: &aime.ToolCall{ID: item.ID, Name: item.Name, Input: input}}, true
+			return cula.Event{Type: cula.EventToolCall, ToolCall: &cula.ToolCall{ID: item.ID, Name: item.Name, Input: input}}, true
 		}
-		return aime.Event{}, false
+		return cula.Event{}, false
 	case "commandExecution":
 		params := []string{}
 		if item.Command != "" {
@@ -104,19 +104,8 @@ func (eventParser) itemEvent(item *item, completed bool) (aime.Event, bool) {
 		if completed && item.ExitCode != nil {
 			params = append(params, fmt.Sprintf("%d", int(*item.ExitCode)))
 		}
-		return aime.Event{Type: aime.EventActivity, Activity: &aime.Activity{Type: aime.ActivityCommand, Parameters: params}}, true
+		return cula.Event{Type: cula.EventActivity, Activity: &cula.Activity{Type: cula.ActivityCommand, Parameters: params}}, true
 	}
-	return aime.Event{}, false
+	return cula.Event{}, false
 }
 
-func reasoningSummary(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return ""
-	}
-	if i := strings.IndexAny(text, "\n\r"); i >= 0 {
-		text = text[:i]
-	}
-	text = strings.TrimSpace(strings.Trim(strings.TrimSpace(text), "*_"))
-	return iruntime.Truncate(text, 80)
-}

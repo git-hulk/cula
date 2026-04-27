@@ -8,25 +8,25 @@ import (
 	"path/filepath"
 	"regexp"
 
-	iruntime "github.com/git-hulk/aime/internal/runtime"
-	aime "github.com/git-hulk/aime/pkg"
+	iruntime "github.com/git-hulk/cula/internal/runtime"
+	cula "github.com/git-hulk/cula/pkg"
 )
 
 type Runtime struct {
-	cfg aime.Config
+	cfg cula.Config
 }
 
-func New(cfg aime.Config) *Runtime {
+func New(cfg cula.Config) *Runtime {
 	return &Runtime{cfg: cfg}
 }
 
-func (r *Runtime) Kind() aime.RuntimeKind {
-	return aime.RuntimeCodex
+func (r *Runtime) Kind() cula.RuntimeKind {
+	return cula.RuntimeCodex
 }
 
-func (r *Runtime) Detect(ctx context.Context) (aime.RuntimeInfo, error) {
+func (r *Runtime) Detect(ctx context.Context) (cula.RuntimeInfo, error) {
 	binary := iruntime.BinaryPath(r.cfg, "codex")
-	info := iruntime.LookupRuntime(binary, "codex", aime.RuntimeCodex, "Codex CLI")
+	info := iruntime.LookupRuntime(binary, "codex", cula.RuntimeCodex, "Codex CLI")
 	if !info.Installed {
 		return info, nil
 	}
@@ -44,12 +44,12 @@ func (r *Runtime) Detect(ctx context.Context) (aime.RuntimeInfo, error) {
 			} `json:"tokens"`
 		}
 		if json.Unmarshal(data, &auth) == nil && auth.Tokens.AccessToken != "" {
-			info.AuthStatus = aime.AuthLoggedIn
+			info.AuthStatus = cula.AuthLoggedIn
 		} else {
-			info.AuthStatus = aime.AuthLoggedOut
+			info.AuthStatus = cula.AuthLoggedOut
 		}
 	} else {
-		info.AuthStatus = aime.AuthLoggedOut
+		info.AuthStatus = cula.AuthLoggedOut
 	}
 	if data, err := os.ReadFile(filepath.Join(home, ".codex", "models_cache.json")); err == nil {
 		var cache struct {
@@ -60,13 +60,13 @@ func (r *Runtime) Detect(ctx context.Context) (aime.RuntimeInfo, error) {
 		}
 		if json.Unmarshal(data, &cache) == nil {
 			for _, m := range cache.Models {
-				info.Models = append(info.Models, aime.Model{ID: m.Slug, Name: m.DisplayName})
+				info.Models = append(info.Models, cula.Model{ID: m.Slug, Name: m.DisplayName})
 			}
 		}
 	}
 	return info, nil
 }
 
-func (r *Runtime) SpawnSession(ctx context.Context, input aime.SessionInput) (aime.Session, error) {
+func (r *Runtime) SpawnSession(ctx context.Context, input cula.SessionInput) (cula.Session, error) {
 	return newSession(ctx, r, input)
 }

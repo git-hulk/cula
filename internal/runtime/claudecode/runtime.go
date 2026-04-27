@@ -7,25 +7,25 @@ import (
 	"regexp"
 	"strings"
 
-	iruntime "github.com/git-hulk/aime/internal/runtime"
-	aime "github.com/git-hulk/aime/pkg"
+	iruntime "github.com/git-hulk/cula/internal/runtime"
+	cula "github.com/git-hulk/cula/pkg"
 )
 
 type Runtime struct {
-	cfg aime.Config
+	cfg cula.Config
 }
 
-func New(cfg aime.Config) *Runtime {
+func New(cfg cula.Config) *Runtime {
 	return &Runtime{cfg: cfg}
 }
 
-func (r *Runtime) Kind() aime.RuntimeKind {
-	return aime.RuntimeClaudeCode
+func (r *Runtime) Kind() cula.RuntimeKind {
+	return cula.RuntimeClaudeCode
 }
 
-func (r *Runtime) Detect(ctx context.Context) (aime.RuntimeInfo, error) {
+func (r *Runtime) Detect(ctx context.Context) (cula.RuntimeInfo, error) {
 	binary := iruntime.BinaryPath(r.cfg, "claude")
-	info := iruntime.LookupRuntime(binary, "claude", aime.RuntimeClaudeCode, "Claude Code")
+	info := iruntime.LookupRuntime(binary, "claude", cula.RuntimeClaudeCode, "Claude Code")
 	if !info.Installed {
 		return info, nil
 	}
@@ -40,14 +40,14 @@ func (r *Runtime) Detect(ctx context.Context) (aime.RuntimeInfo, error) {
 			LoggedIn bool `json:"loggedIn"`
 		}
 		if json.Unmarshal([]byte(strings.TrimSpace(string(out))), &status) == nil && status.LoggedIn {
-			info.AuthStatus = aime.AuthLoggedIn
+			info.AuthStatus = cula.AuthLoggedIn
 		} else {
-			info.AuthStatus = aime.AuthLoggedOut
+			info.AuthStatus = cula.AuthLoggedOut
 		}
 	} else {
-		info.AuthStatus = aime.AuthLoggedOut
+		info.AuthStatus = cula.AuthLoggedOut
 	}
-	info.Models = []aime.Model{
+	info.Models = []cula.Model{
 		{ID: "claude-opus-4-7", Name: "Claude Opus 4.7"},
 		{ID: "claude-opus-4-6", Name: "Claude Opus 4.6"},
 		{ID: "claude-sonnet-4-6", Name: "Claude Sonnet 4.6"},
@@ -56,6 +56,6 @@ func (r *Runtime) Detect(ctx context.Context) (aime.RuntimeInfo, error) {
 	return info, nil
 }
 
-func (r *Runtime) SpawnSession(ctx context.Context, input aime.SessionInput) (aime.Session, error) {
+func (r *Runtime) SpawnSession(ctx context.Context, input cula.SessionInput) (cula.Session, error) {
 	return newSession(ctx, r, input)
 }

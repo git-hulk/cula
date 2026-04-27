@@ -11,17 +11,17 @@ import (
 	"sync/atomic"
 	"syscall"
 
-	iruntime "github.com/git-hulk/aime/internal/runtime"
-	aime "github.com/git-hulk/aime/pkg"
+	iruntime "github.com/git-hulk/cula/internal/runtime"
+	cula "github.com/git-hulk/cula/pkg"
 )
 
 type session struct {
-	input aime.SessionInput
+	input cula.SessionInput
 
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
 
-	events chan aime.Event
+	events chan cula.Event
 
 	cancelCtx context.CancelFunc
 	promptCh  chan string
@@ -32,12 +32,12 @@ type session struct {
 	threadID  string
 	mu        sync.Mutex
 	sessionID string
-	state     aime.State
+	state     cula.State
 }
 
-var _ aime.Session = (*session)(nil)
+var _ cula.Session = (*session)(nil)
 
-func newSession(ctx context.Context, rt *Runtime, input aime.SessionInput) (aime.Session, error) {
+func newSession(ctx context.Context, rt *Runtime, input cula.SessionInput) (cula.Session, error) {
 	input = iruntime.NormalizeInput(input)
 	runCtx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(runCtx, iruntime.BinaryPath(rt.cfg, "codex"), "app-server", "--listen", "stdio://")
@@ -68,14 +68,14 @@ func newSession(ctx context.Context, rt *Runtime, input aime.SessionInput) (aime
 		input:     input,
 		cmd:       cmd,
 		stdin:     stdin,
-		events:    make(chan aime.Event, 1024),
+		events:    make(chan cula.Event, 1024),
 		cancelCtx: cancel,
 		promptCh:  make(chan string, 16),
 		doneCh:    make(chan struct{}),
 		sessionID: input.SessionID,
-		state:     aime.StateRunning,
+		state:     cula.StateRunning,
 	}
-	iruntime.Emit(s.events, s.doneCh, aime.Event{Type: aime.EventState, Runtime: aime.RuntimeCodex, SessionID: input.SessionID, State: aime.StateRunning})
+	iruntime.Emit(s.events, s.doneCh, cula.Event{Type: cula.EventState, Runtime: cula.RuntimeCodex, SessionID: input.SessionID, State: cula.StateRunning})
 	if err := s.start(ctx, stdout, stderr); err != nil {
 		_ = cmd.Process.Kill()
 		cancel()
@@ -126,16 +126,16 @@ func (s *session) Send(ctx context.Context, prompt string) error {
 	}
 }
 
-func (s *session) Events() <-chan aime.Event {
+func (s *session) Events() <-chan cula.Event {
 	return s.events
 }
 
 func (s *session) Cancel(ctx context.Context) error {
 	s.doneOnce.Do(func() {
 		s.mu.Lock()
-		s.state = aime.StateCanceled
+		s.state = cula.StateCanceled
 		s.mu.Unlock()
-		iruntime.Emit(s.events, nil, aime.Event{Type: aime.EventState, Runtime: aime.RuntimeCodex, SessionID: s.sessionID, State: aime.StateCanceled})
+		iruntime.Emit(s.events, nil, cula.Event{Type: cula.EventState, Runtime: cula.RuntimeCodex, SessionID: s.sessionID, State: cula.StateCanceled})
 		close(s.doneCh)
 		s.cancelCtx()
 		if s.cmd != nil && s.cmd.Process != nil {
@@ -156,7 +156,7 @@ func (s *session) initialize(scanner *bufio.Scanner) error {
 		"id":      initID,
 		"method":  "initialize",
 		"params": map[string]any{
-			"clientInfo": map[string]string{"name": "aime", "version": "0.1.0"},
+			"clientInfo": map[string]string{"name": "cula", "version": "0.1.0"},
 		},
 	}); err != nil {
 		return fmt.Errorf("send initialize: %w", err)
@@ -233,9 +233,9 @@ func (s *session) consumePrompts() {
 				},
 			}
 			if err := iruntime.WriteJSONLine(s.stdin, req); err != nil {
-				iruntime.Emit(s.events, s.doneCh, aime.Event{
-					Type:      aime.EventError,
-					Runtime:   aime.RuntimeCodex,
+				iruntime.Emit(s.events, s.doneCh, cula.Event{
+					Type:      cula.EventError,
+					Runtime:   cula.RuntimeCodex,
 					SessionID: s.sessionID,
 					Error:     fmt.Sprintf("send turn/start: %v", err),
 				})
@@ -249,17 +249,17 @@ func (s *session) readStdout(scanner *bufio.Scanner) {
 		line := append([]byte(nil), scanner.Bytes()...)
 		var raw json.RawMessage
 		if err := json.Unmarshal(line, &raw); err != nil {
-			iruntime.Emit(s.events, s.doneCh, aime.Event{Type: aime.EventError, Runtime: aime.RuntimeCodex, SessionID: s.sessionID, Error: fmt.Sprintf("decode stdout: %v", err)})
+			iruntime.Emit(s.events, s.doneCh, cula.Event{Type: cula.EventError, Runtime: cula.RuntimeCodex, SessionID: s.sessionID, Error: fmt.Sprintf("decode stdout: %v", err)})
 			continue
 		}
 		ev, ok := ParseEvent(raw)
 		if !ok {
-			ev = aime.Event{Type: aime.EventRaw}
+			ev = cula.Event{Type: cula.EventRaw}
 		}
 		s.emitEvent(raw, ev)
 	}
 	if err := scanner.Err(); err != nil {
-		iruntime.Emit(s.events, s.doneCh, aime.Event{Type: aime.EventError, Runtime: aime.RuntimeCodex, SessionID: s.sessionID, Error: fmt.Sprintf("read stdout: %v", err)})
+		iruntime.Emit(s.events, s.doneCh, cula.Event{Type: cula.EventError, Runtime: cula.RuntimeCodex, SessionID: s.sessionID, Error: fmt.Sprintf("read stdout: %v", err)})
 	}
 }
 
@@ -267,17 +267,17 @@ func (s *session) readStderr(r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	for scanner.Scan() {
-		iruntime.Emit(s.events, s.doneCh, aime.Event{
-			Type:      aime.EventStderr,
-			Runtime:   aime.RuntimeCodex,
+		iruntime.Emit(s.events, s.doneCh, cula.Event{
+			Type:      cula.EventStderr,
+			Runtime:   cula.RuntimeCodex,
 			SessionID: s.sessionID,
 			Error:     scanner.Text(),
 		})
 	}
 	if err := scanner.Err(); err != nil {
-		iruntime.Emit(s.events, s.doneCh, aime.Event{
-			Type:      aime.EventError,
-			Runtime:   aime.RuntimeCodex,
+		iruntime.Emit(s.events, s.doneCh, cula.Event{
+			Type:      cula.EventError,
+			Runtime:   cula.RuntimeCodex,
 			SessionID: s.sessionID,
 			Error:     fmt.Sprintf("read stderr: %v", err),
 		})
@@ -313,7 +313,7 @@ func (s *session) readJSONRPCResponse(scanner *bufio.Scanner, requestID int64, f
 			if json.Unmarshal(line, &raw) == nil {
 				ev, ok := ParseEvent(raw)
 				if !ok {
-					ev = aime.Event{Type: aime.EventRaw}
+					ev = cula.Event{Type: cula.EventRaw}
 				}
 				s.emitEvent(raw, ev)
 			}
@@ -325,8 +325,8 @@ func (s *session) readJSONRPCResponse(scanner *bufio.Scanner, requestID int64, f
 	return nil, fmt.Errorf("stdout closed before response %d", requestID)
 }
 
-func (s *session) emitEvent(raw json.RawMessage, ev aime.Event) {
-	ev.Runtime = aime.RuntimeCodex
+func (s *session) emitEvent(raw json.RawMessage, ev cula.Event) {
+	ev.Runtime = cula.RuntimeCodex
 	ev.SessionID = s.sessionID
 	ev.Raw = raw
 	iruntime.Emit(s.events, s.doneCh, ev)
@@ -337,19 +337,19 @@ func (s *session) wait() {
 	s.wg.Wait()
 	code := iruntime.ExitCode(err)
 	s.mu.Lock()
-	canceled := s.state == aime.StateCanceled
+	canceled := s.state == cula.StateCanceled
 	s.mu.Unlock()
 	if !canceled {
-		state := aime.StateCompleted
+		state := cula.StateCompleted
 		if code != 0 {
-			state = aime.StateFailed
+			state = cula.StateFailed
 		}
 		s.mu.Lock()
 		s.state = state
 		s.mu.Unlock()
-		iruntime.Emit(s.events, nil, aime.Event{
-			Type:      aime.EventState,
-			Runtime:   aime.RuntimeCodex,
+		iruntime.Emit(s.events, nil, cula.Event{
+			Type:      cula.EventState,
+			Runtime:   cula.RuntimeCodex,
 			SessionID: s.sessionID,
 			State:     state,
 			ExitCode:  &code,

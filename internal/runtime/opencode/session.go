@@ -10,17 +10,17 @@ import (
 	"sync"
 	"syscall"
 
-	iruntime "github.com/git-hulk/aime/internal/runtime"
-	aime "github.com/git-hulk/aime/pkg"
+	iruntime "github.com/git-hulk/cula/internal/runtime"
+	cula "github.com/git-hulk/cula/pkg"
 )
 
-var _ aime.Session = (*session)(nil)
+var _ cula.Session = (*session)(nil)
 
 type session struct {
 	mu        sync.Mutex
 	runtime   *Runtime
-	input     aime.SessionInput
-	events    chan aime.Event
+	input     cula.SessionInput
+	events    chan cula.Event
 	sessionID string
 	childCmd  *exec.Cmd
 	promptCh  chan string
@@ -31,13 +31,13 @@ type session struct {
 	parser    eventParser
 }
 
-func newSession(ctx context.Context, rt *Runtime, input aime.SessionInput) (aime.Session, error) {
+func newSession(ctx context.Context, rt *Runtime, input cula.SessionInput) (cula.Session, error) {
 	input = iruntime.NormalizeInput(input)
 	runCtx, cancel := context.WithCancel(context.Background())
 	s := &session{
 		runtime:   rt,
 		input:     input,
-		events:    make(chan aime.Event, 1024),
+		events:    make(chan cula.Event, 1024),
 		sessionID: input.SessionID,
 		promptCh:  make(chan string, 16),
 		doneCh:    make(chan struct{}),
@@ -45,11 +45,11 @@ func newSession(ctx context.Context, rt *Runtime, input aime.SessionInput) (aime
 		cancelCtx: cancel,
 		parser:    eventParser{},
 	}
-	iruntime.Emit(s.events, s.doneCh, aime.Event{
-		Type:      aime.EventState,
-		Runtime:   aime.RuntimeOpenCode,
+	iruntime.Emit(s.events, s.doneCh, cula.Event{
+		Type:      cula.EventState,
+		Runtime:   cula.RuntimeOpenCode,
 		SessionID: input.SessionID,
-		State:     aime.StateRunning,
+		State:     cula.StateRunning,
 	})
 	go s.consumePrompts()
 	if input.Prompt != "" {
@@ -75,18 +75,18 @@ func (s *session) Send(ctx context.Context, prompt string) error {
 	}
 }
 
-func (s *session) Events() <-chan aime.Event {
+func (s *session) Events() <-chan cula.Event {
 	return s.events
 }
 
 func (s *session) Cancel(ctx context.Context) error {
 	s.doneOnce.Do(func() {
 		exit := -1
-		iruntime.Emit(s.events, nil, aime.Event{
-			Type:      aime.EventState,
-			Runtime:   aime.RuntimeOpenCode,
+		iruntime.Emit(s.events, nil, cula.Event{
+			Type:      cula.EventState,
+			Runtime:   cula.RuntimeOpenCode,
 			SessionID: s.sessionID,
-			State:     aime.StateCanceled,
+			State:     cula.StateCanceled,
 			ExitCode:  &exit,
 		})
 		close(s.doneCh)
@@ -109,11 +109,11 @@ func (s *session) consumePrompts() {
 			exitCode := s.spawnAndWait(prompt)
 			if exitCode != 0 {
 				exit := exitCode
-				iruntime.Emit(s.events, s.doneCh, aime.Event{
-					Type:      aime.EventState,
-					Runtime:   aime.RuntimeOpenCode,
+				iruntime.Emit(s.events, s.doneCh, cula.Event{
+					Type:      cula.EventState,
+					Runtime:   cula.RuntimeOpenCode,
 					SessionID: s.sessionID,
-					State:     aime.StateFailed,
+					State:     cula.StateFailed,
 					ExitCode:  &exit,
 				})
 			}
@@ -168,9 +168,9 @@ func (s *session) spawnAndWait(prompt string) int {
 
 	exitCode := iruntime.ExitCode(waitErr)
 	if exitCode == 0 {
-		iruntime.Emit(s.events, s.doneCh, aime.Event{
-			Type:      aime.EventDone,
-			Runtime:   aime.RuntimeOpenCode,
+		iruntime.Emit(s.events, s.doneCh, cula.Event{
+			Type:      cula.EventDone,
+			Runtime:   cula.RuntimeOpenCode,
 			SessionID: s.sessionID,
 		})
 	}
@@ -179,7 +179,7 @@ func (s *session) spawnAndWait(prompt string) int {
 
 func (s *session) buildArgs(sessionID, prompt string) []string {
 	args := []string{"run", "--format", "json", "--thinking"}
-	if s.input.Permission == aime.PermissionSkip {
+	if s.input.Permission != cula.PermissionNever {
 		args = append(args, "--dangerously-skip-permissions")
 	}
 	if s.input.Model != "" {
@@ -206,7 +206,7 @@ func (s *session) readStdout(r io.Reader) {
 		}
 		ev, ok := ParseEvent(raw)
 		if !ok {
-			ev = aime.Event{Type: aime.EventRaw}
+			ev = cula.Event{Type: cula.EventRaw}
 		}
 		s.emitEvent(raw, ev)
 	}
@@ -219,9 +219,9 @@ func (s *session) readStderr(r io.Reader) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	for scanner.Scan() {
-		iruntime.Emit(s.events, s.doneCh, aime.Event{
-			Type:      aime.EventStderr,
-			Runtime:   aime.RuntimeOpenCode,
+		iruntime.Emit(s.events, s.doneCh, cula.Event{
+			Type:      cula.EventStderr,
+			Runtime:   cula.RuntimeOpenCode,
 			SessionID: s.sessionID,
 			Error:     scanner.Text(),
 		})
@@ -231,17 +231,17 @@ func (s *session) readStderr(r io.Reader) {
 	}
 }
 
-func (s *session) emitEvent(raw json.RawMessage, ev aime.Event) {
-	ev.Runtime = aime.RuntimeOpenCode
+func (s *session) emitEvent(raw json.RawMessage, ev cula.Event) {
+	ev.Runtime = cula.RuntimeOpenCode
 	ev.SessionID = s.sessionID
 	ev.Raw = raw
 	iruntime.Emit(s.events, s.doneCh, ev)
 }
 
 func (s *session) emitError(message string) {
-	iruntime.Emit(s.events, s.doneCh, aime.Event{
-		Type:      aime.EventError,
-		Runtime:   aime.RuntimeOpenCode,
+	iruntime.Emit(s.events, s.doneCh, cula.Event{
+		Type:      cula.EventError,
+		Runtime:   cula.RuntimeOpenCode,
 		SessionID: s.sessionID,
 		Error:     message,
 	})

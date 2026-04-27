@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/git-hulk/aime/pkg"
+	"github.com/git-hulk/cula/pkg"
 )
 
 type stubRuntime struct {

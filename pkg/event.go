@@ -23,9 +23,9 @@ type ActivityType string
 
 const (
 	ActivityThinking  ActivityType = "thinking"
-	ActivityReasoning ActivityType = "reasoning"
 	ActivityToolCall  ActivityType = "tool_call"
 	ActivityCommand   ActivityType = "command"
+	ActivityNarration ActivityType = "narration"
 )
 
 type Activity struct {

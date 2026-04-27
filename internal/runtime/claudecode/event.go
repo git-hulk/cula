@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"strings"
 
-	iruntime "github.com/git-hulk/aime/internal/runtime"
-	aime "github.com/git-hulk/aime/pkg"
+	iruntime "github.com/git-hulk/cula/internal/runtime"
+	cula "github.com/git-hulk/cula/pkg"
 )
 
 type eventParser struct{}
 
-func ParseEvent(raw json.RawMessage) (aime.Event, bool) {
+func ParseEvent(raw json.RawMessage) (cula.Event, bool) {
 	return eventParser{}.parse(raw)
 }
 
@@ -50,14 +50,14 @@ func (eventParser) captureSession(raw json.RawMessage) string {
 	return ""
 }
 
-func (p eventParser) parse(raw json.RawMessage) (aime.Event, bool) {
+func (p eventParser) parse(raw json.RawMessage) (cula.Event, bool) {
 	var ev event
 	if json.Unmarshal(raw, &ev) != nil {
-		return aime.Event{}, false
+		return cula.Event{}, false
 	}
 	switch ev.Type {
 	case "result":
-		return aime.Event{Type: aime.EventDone}, true
+		return cula.Event{Type: cula.EventDone}, true
 	case "assistant":
 		if out, ok := p.assistantEvent(ev); ok {
 			return out, true
@@ -69,7 +69,7 @@ func (p eventParser) parse(raw json.RawMessage) (aime.Event, bool) {
 	}
 	if ev.Role == "assistant" {
 		if text, ok := ev.Content.AsString(); ok && strings.TrimSpace(text) != "" {
-			return aime.Event{Type: aime.EventText, Text: text}, true
+			return cula.Event{Type: cula.EventText, Text: text}, true
 		}
 	}
 	for _, b := range contentBlocks(ev.Content) {
@@ -77,50 +77,50 @@ func (p eventParser) parse(raw json.RawMessage) (aime.Event, bool) {
 			return out, true
 		}
 	}
-	return aime.Event{}, false
+	return cula.Event{}, false
 }
 
-func (eventParser) assistantEvent(ev event) (aime.Event, bool) {
+func (eventParser) assistantEvent(ev event) (cula.Event, bool) {
 	if ev.Message == nil {
-		return aime.Event{}, false
+		return cula.Event{}, false
 	}
 	for _, b := range ev.Message.Content {
 		switch b.Type {
 		case "thinking":
-			return aime.Event{Type: aime.EventActivity, Activity: &aime.Activity{Type: aime.ActivityThinking}}, true
+			return cula.Event{Type: cula.EventActivity, Activity: &cula.Activity{Type: cula.ActivityThinking}}, true
 		case "tool_use":
-			return aime.Event{Type: aime.EventToolCall, ToolCall: &aime.ToolCall{ID: b.ID, Name: b.Name, Input: b.Input}}, true
+			return cula.Event{Type: cula.EventToolCall, ToolCall: &cula.ToolCall{ID: b.ID, Name: b.Name, Input: b.Input}}, true
 		}
 	}
 	for _, b := range ev.Message.Content {
 		if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-			return aime.Event{Type: aime.EventText, Text: b.Text}, true
+			return cula.Event{Type: cula.EventText, Text: b.Text}, true
 		}
 	}
-	return aime.Event{}, false
+	return cula.Event{}, false
 }
 
-func (eventParser) toolResultEvent(ev event) (aime.Event, bool) {
+func (eventParser) toolResultEvent(ev event) (cula.Event, bool) {
 	if ev.Message == nil {
-		return aime.Event{}, false
+		return cula.Event{}, false
 	}
 	for _, b := range ev.Message.Content {
 		if out, ok := toolResultBlockEvent(b); ok {
 			return out, true
 		}
 	}
-	return aime.Event{}, false
+	return cula.Event{}, false
 }
 
-func toolResultBlockEvent(b block) (aime.Event, bool) {
+func toolResultBlockEvent(b block) (cula.Event, bool) {
 	if b.Type != "tool_result" || b.ToolUseID == "" {
-		return aime.Event{}, false
+		return cula.Event{}, false
 	}
 	text := b.Content.AsText()
 	if text == "" {
-		return aime.Event{}, false
+		return cula.Event{}, false
 	}
-	return aime.Event{Type: aime.EventToolResult, ToolResult: &aime.ToolResult{ToolCallID: b.ToolUseID, Content: text}}, true
+	return cula.Event{Type: cula.EventToolResult, ToolResult: &cula.ToolResult{ToolCallID: b.ToolUseID, Content: text}}, true
 }
 
 func contentBlocks(content iruntime.RawValue) []block {
