@@ -73,13 +73,11 @@ for ev := range session.Events() {
 
 ## Supported runtimes
 
-| Runtime | Kind |
-| --- | --- |
-| Claude Code | `claude-code` |
-| Codex | `codex` |
-| OpenCode | `opencode` |
+- Claude Code
+- Codex
+- OpenCode
 
-Adding a new runtime means implementing the `Runtime` interface in `pkg/runtime.go` and registering it.
+Welcome to submit an issue/PR if you want more runtimes to be supported.
 
 ## Build a service on top
 
