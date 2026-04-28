@@ -45,7 +45,6 @@ type RuntimeOption func(*Config)
 type Config struct {
 	BinaryPath string
 	Env        []string
-	IncludeRaw bool
 }
 
 func WithBinaryPath(path string) RuntimeOption {
@@ -57,11 +56,5 @@ func WithBinaryPath(path string) RuntimeOption {
 func WithEnv(env []string) RuntimeOption {
 	return func(c *Config) {
 		c.Env = append([]string(nil), env...)
-	}
-}
-
-func WithIncludeRaw(include bool) RuntimeOption {
-	return func(c *Config) {
-		c.IncludeRaw = include
 	}
 }

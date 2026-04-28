@@ -30,6 +30,7 @@ type SessionInput struct {
 	Metadata   map[string]string `json:"metadata,omitempty"`
 	Permission PermissionMode    `json:"permission,omitempty"`
 	Sandbox    SandboxMode       `json:"sandbox,omitempty"`
+	IncludeRaw bool              `json:"include_raw,omitempty"`
 }
 
 type Session interface {
