@@ -16,7 +16,8 @@ import (
 )
 
 type session struct {
-	input cula.SessionInput
+	input      cula.SessionInput
+	includeRaw bool
 
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
@@ -65,15 +66,16 @@ func newSession(ctx context.Context, rt *Runtime, input cula.SessionInput) (cula
 	}
 
 	s := &session{
-		input:     input,
-		cmd:       cmd,
-		stdin:     stdin,
-		events:    make(chan cula.Event, 1024),
-		cancelCtx: cancel,
-		promptCh:  make(chan string, 16),
-		doneCh:    make(chan struct{}),
-		sessionID: input.SessionID,
-		state:     cula.StateRunning,
+		input:      input,
+		includeRaw: rt.cfg.IncludeRaw,
+		cmd:        cmd,
+		stdin:      stdin,
+		events:     make(chan cula.Event, 1024),
+		cancelCtx:  cancel,
+		promptCh:   make(chan string, 16),
+		doneCh:     make(chan struct{}),
+		sessionID:  input.SessionID,
+		state:      cula.StateRunning,
 	}
 	iruntime.Emit(s.events, s.doneCh, cula.Event{Type: cula.EventState, Runtime: cula.RuntimeCodex, SessionID: input.SessionID, State: cula.StateRunning})
 	if err := s.start(ctx, stdout, stderr); err != nil {
@@ -328,7 +330,9 @@ func (s *session) readJSONRPCResponse(scanner *bufio.Scanner, requestID int64, f
 func (s *session) emitEvent(raw json.RawMessage, ev cula.Event) {
 	ev.Runtime = cula.RuntimeCodex
 	ev.SessionID = s.sessionID
-	ev.Raw = raw
+	if s.includeRaw {
+		ev.Raw = raw
+	}
 	iruntime.Emit(s.events, s.doneCh, ev)
 }
 

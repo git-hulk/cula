@@ -234,7 +234,9 @@ func (s *session) readStderr(r io.Reader) {
 func (s *session) emitEvent(raw json.RawMessage, ev cula.Event) {
 	ev.Runtime = cula.RuntimeOpenCode
 	ev.SessionID = s.sessionID
-	ev.Raw = raw
+	if s.runtime.cfg.IncludeRaw {
+		ev.Raw = raw
+	}
 	iruntime.Emit(s.events, s.doneCh, ev)
 }
 
