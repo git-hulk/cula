@@ -13,25 +13,28 @@
 //	    runtimes.NewClaudeCode(),
 //	    runtimes.NewCodex(),
 //	    runtimes.NewOpenCode(),
+//	    runtimes.NewCopilot(),
 //	)
 package runtimes
 
 import (
 	"github.com/git-hulk/cula/internal/runtime/claudecode"
 	"github.com/git-hulk/cula/internal/runtime/codex"
+	"github.com/git-hulk/cula/internal/runtime/copilot"
 	"github.com/git-hulk/cula/internal/runtime/opencode"
 	cula "github.com/git-hulk/cula/pkg"
 )
 
 // DefaultRegistry returns a cula.Registry preloaded with every built-in
-// runtime (Claude Code, Codex, OpenCode), each configured by the given
-// RuntimeOptions. Use this when you want all supported runtimes available
-// without enumerating them yourself.
+// runtime (Claude Code, Codex, OpenCode, Copilot), each configured by the
+// given RuntimeOptions. Use this when you want all supported runtimes
+// available without enumerating them yourself.
 func DefaultRegistry(opts ...cula.RuntimeOption) *cula.Registry {
 	return cula.NewRegistry(
 		NewClaudeCode(opts...),
 		NewCodex(opts...),
 		NewOpenCode(opts...),
+		NewCopilot(opts...),
 	)
 }
 
@@ -49,6 +52,11 @@ func NewCodex(opts ...cula.RuntimeOption) cula.Runtime {
 // NewOpenCode returns the built-in OpenCode runtime.
 func NewOpenCode(opts ...cula.RuntimeOption) cula.Runtime {
 	return opencode.New(buildConfig(opts))
+}
+
+// NewCopilot returns the built-in GitHub Copilot CLI runtime.
+func NewCopilot(opts ...cula.RuntimeOption) cula.Runtime {
+	return copilot.New(buildConfig(opts))
 }
 
 func buildConfig(opts []cula.RuntimeOption) cula.Config {

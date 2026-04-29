@@ -8,6 +8,7 @@ const (
 	RuntimeClaudeCode RuntimeKind = "claude-code"
 	RuntimeCodex      RuntimeKind = "codex"
 	RuntimeOpenCode   RuntimeKind = "opencode"
+	RuntimeCopilot    RuntimeKind = "copilot"
 )
 
 const (

@@ -76,6 +76,7 @@ for ev := range session.Events() {
 - Claude Code
 - Codex
 - OpenCode
+- GitHub Copilot CLI
 
 Welcome to submit an issue/PR if you want more runtimes to be supported.
 
