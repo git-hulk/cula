@@ -57,8 +57,8 @@ func TestParseEventStructuredActivityAndSession(t *testing.T) {
 	if !ok || ev.Activity == nil || ev.Activity.Type != cula.ActivityThinking {
 		t.Fatalf("reasoning event = %#v, %v", ev, ok)
 	}
-	if got := ev.Activity.Parameters; len(got) != 0 {
-		t.Fatalf("reasoning params = %#v, want none", got)
+	if got := ev.Activity.Parameters; len(got) != 1 || got[0] != "Inspecting repo" {
+		t.Fatalf("reasoning params = %#v, want [\"Inspecting repo\"]", got)
 	}
 
 	tool := rawJSON(t, `{"type":"part","part":{"type":"tool","tool":"bash","callID":"call-1","input":{"command":"ls"},"state":{"status":"completed","output":"done"}}}`)

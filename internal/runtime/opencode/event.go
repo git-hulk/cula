@@ -2,7 +2,9 @@ package opencode
 
 import (
 	"encoding/json"
+	"strings"
 
+	iruntime "github.com/git-hulk/cula/internal/runtime"
 	cula "github.com/git-hulk/cula/pkg"
 )
 
@@ -65,7 +67,11 @@ func (p eventParser) parse(raw json.RawMessage) (cula.Event, bool) {
 			return cula.Event{Type: cula.EventText, Text: ev.Part.Text}, true
 		}
 	case "reasoning":
-		return cula.Event{Type: cula.EventActivity, Activity: &cula.Activity{Type: cula.ActivityThinking}}, true
+		activity := &cula.Activity{Type: cula.ActivityThinking}
+		if summary := reasoningSummary(ev.Part.Text); summary != "" {
+			activity.Parameters = []string{summary}
+		}
+		return cula.Event{Type: cula.EventActivity, Activity: activity}, true
 	case "tool":
 		return p.toolEvent(ev.Part)
 	}
@@ -82,6 +88,24 @@ func (eventParser) stepFinishEvent(ev event) (cula.Event, bool) {
 	default:
 		return cula.Event{}, false
 	}
+}
+
+// reasoningSummary returns the bolded heading on the first line of an
+// opencode reasoning part's text (e.g. "Inspecting the repo" from
+// "**Inspecting the repo**\n\n..."), or "" if none is usable.
+func reasoningSummary(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	if i := strings.IndexAny(text, "\n\r"); i >= 0 {
+		text = text[:i]
+	}
+	text = strings.TrimSpace(strings.Trim(strings.TrimSpace(text), "*_"))
+	if text == "" {
+		return ""
+	}
+	return iruntime.Truncate(text, 80)
 }
 
 func (eventParser) toolEvent(part *part) (cula.Event, bool) {
