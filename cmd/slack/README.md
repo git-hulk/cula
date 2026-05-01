@@ -47,16 +47,22 @@ to mention it.
 ## Run
 
 ```bash
+# Optional. If either token is missing, the setup wizard prompts for it before
+# runtime selection.
 export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_APP_TOKEN=xapp-...
 
-# Optional. Defaults to codex.
+# Optional defaults shown in the setup wizard.
 export CULA_RUNTIME=codex
 export CULA_MODEL=
 export CULA_WORKDIR=/path/to/project
 
 go run ./cmd/slack
 ```
+
+On startup, the command opens an interactive setup wizard. It asks for any
+missing Slack bot/app tokens first, then lets you choose the installed runtime,
+model, and working directory for Slack requests.
 
 Supported `CULA_RUNTIME` values are:
 

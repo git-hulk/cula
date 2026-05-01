@@ -88,12 +88,17 @@ func main() {
 		opencode.New(cula.Config{}),
 		copilot.New(cula.Config{}),
 	)
-	if _, ok := registry.Runtime(cfg.runtime); !ok {
-		log.Fatalf("runtime %q is not registered", cfg.runtime)
-	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	cfg, err = configureInteractive(ctx, cfg, registry)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if _, ok := registry.Runtime(cfg.runtime); !ok {
+		log.Fatalf("runtime %q is not registered", cfg.runtime)
+	}
 
 	info, err := detectRuntime(ctx, registry, cfg.runtime)
 	if err != nil {
@@ -147,12 +152,6 @@ func loadConfig() (config, error) {
 		permission: cula.PermissionMode(strings.TrimSpace(os.Getenv("CULA_PERMISSION"))),
 		sandbox:    cula.SandboxMode(strings.TrimSpace(os.Getenv("CULA_SANDBOX"))),
 		debug:      strings.EqualFold(strings.TrimSpace(os.Getenv("CULA_SLACK_DEBUG")), "true"),
-	}
-	if cfg.botToken == "" {
-		return config{}, fmt.Errorf("SLACK_BOT_TOKEN is required")
-	}
-	if cfg.appToken == "" {
-		return config{}, fmt.Errorf("SLACK_APP_TOKEN is required")
 	}
 	if rt := strings.TrimSpace(os.Getenv("CULA_RUNTIME")); rt != "" {
 		cfg.runtime = cula.RuntimeKind(rt)
