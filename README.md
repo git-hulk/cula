@@ -24,6 +24,10 @@ The bundled `cula` TUI is a reference example, not the product. It exists to sho
 
 If you want a chat UI over local agents, use it as-is. If you're building something else (router, daemon, IDE plugin), treat it as a worked example of how to consume `pkg` and adapt the same pattern to your surface.
 
+There is also a Slack bot example in [`cmd/slack`](cmd/slack). See
+[`cmd/slack/README.md`](cmd/slack/README.md) for setup, behavior, and
+runtime options.
+
 ## Install
 
 ```bash

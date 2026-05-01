@@ -108,4 +108,3 @@ func (eventParser) itemEvent(item *item, completed bool) (cula.Event, bool) {
 	}
 	return cula.Event{}, false
 }
-

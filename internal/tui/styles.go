@@ -132,4 +132,3 @@ var (
 	// from session info at a glance — different signal, different color.
 	styleStderrLabel = lipgloss.NewStyle().Foreground(colInfo)
 )
-

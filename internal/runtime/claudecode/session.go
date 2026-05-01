@@ -89,7 +89,7 @@ func (s *session) Cancel(ctx context.Context) error {
 			State:     cula.StateCanceled,
 			ExitCode:  &exit,
 		})
-		
+
 		close(s.doneCh)
 		s.cancelCtx()
 		s.mu.Lock()

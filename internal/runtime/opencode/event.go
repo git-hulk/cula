@@ -128,4 +128,3 @@ func (eventParser) toolEvent(part *part) (cula.Event, bool) {
 	}
 	return cula.Event{Type: cula.EventToolCall, ToolCall: &cula.ToolCall{ID: part.CallID, Name: toolName, Input: input}}, true
 }
-
