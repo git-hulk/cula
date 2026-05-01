@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,6 +26,8 @@ import (
 const (
 	answerUpdateInterval   = 750 * time.Millisecond
 	activityUpdateInterval = 500 * time.Millisecond
+	historyMessageLimit    = 64
+	maxHistoryContextLen   = 12000
 	maxSlackTextLen        = 39000
 	maxSlackBlockTextLen   = 2900
 )
@@ -52,10 +55,11 @@ type bot struct {
 }
 
 type threadSession struct {
-	mu        sync.Mutex
-	session   cula.Session
-	sessionID string
-	busy      bool
+	mu            sync.Mutex
+	session       cula.Session
+	sessionID     string
+	historyCursor string
+	busy          bool
 }
 
 type slackTurn struct {
@@ -263,7 +267,7 @@ func (b *bot) handleAppMention(ctx context.Context, ev *slackevents.AppMentionEv
 	}
 	thread := valueOr(ev.ThreadTimeStamp, ev.TimeStamp)
 	b.debugf("starting turn from app_mention channel=%s thread=%s prompt_len=%d", ev.Channel, thread, runeLen(prompt))
-	go b.runTurn(ctx, ev.Channel, thread, prompt)
+	go b.runTurn(ctx, ev.Channel, thread, ev.TimeStamp, prompt, true)
 }
 
 func (b *bot) handleMessage(ctx context.Context, ev *slackevents.MessageEvent) {
@@ -305,10 +309,10 @@ func (b *bot) handleMessage(ctx context.Context, ev *slackevents.MessageEvent) {
 	}
 	thread := valueOr(ev.ThreadTimeStamp, ev.TimeStamp)
 	b.debugf("starting turn from direct message channel=%s thread=%s prompt_len=%d", ev.Channel, thread, runeLen(prompt))
-	go b.runTurn(ctx, ev.Channel, thread, prompt)
+	go b.runTurn(ctx, ev.Channel, thread, ev.TimeStamp, prompt, false)
 }
 
-func (b *bot) runTurn(ctx context.Context, channel, thread, prompt string) {
+func (b *bot) runTurn(ctx context.Context, channel, thread, eventTS, prompt string, includeSlackHistory bool) {
 	b.debugf("turn started channel=%s thread=%s prompt_len=%d", channel, thread, runeLen(prompt))
 	ts := b.thread(channel, thread)
 	ts.mu.Lock()
@@ -329,6 +333,7 @@ func (b *bot) runTurn(ctx context.Context, channel, thread, prompt string) {
 	ts.busy = true
 	sess := ts.session
 	sessionID := ts.sessionID
+	historyCursor := ts.historyCursor
 	ts.mu.Unlock()
 
 	turn := &slackTurn{channel: channel, thread: thread}
@@ -369,8 +374,23 @@ func (b *bot) runTurn(ctx context.Context, channel, thread, prompt string) {
 		b.debugf("reusing runtime session channel=%s thread=%s session_id=%s", channel, thread, sessionID)
 	}
 
-	b.debugf("sending prompt to runtime channel=%s thread=%s prompt_len=%d", channel, thread, runeLen(prompt))
-	if err := sess.Send(ctx, prompt); err != nil {
+	runtimePrompt := prompt
+	nextHistoryCursor := historyCursor
+	historyCursorReady := false
+	if includeSlackHistory {
+		historyPrompt, nextCursor, err := b.promptWithSlackHistory(channel, thread, eventTS, historyCursor, prompt)
+		if err != nil {
+			logSlackError("read slack history", err)
+			b.debugf("continuing without slack history channel=%s thread=%s cursor=%s err=%v", channel, thread, historyCursor, err)
+		} else {
+			runtimePrompt = historyPrompt
+			nextHistoryCursor = nextCursor
+			historyCursorReady = true
+		}
+	}
+
+	b.debugf("sending prompt to runtime channel=%s thread=%s prompt_len=%d", channel, thread, runeLen(runtimePrompt))
+	if err := sess.Send(ctx, runtimePrompt); err != nil {
 		b.debugf("send prompt failed channel=%s thread=%s err=%v", channel, thread, err)
 		turn.lastErr = fmt.Sprintf("send prompt: %v", err)
 		b.clearSession(ts)
@@ -379,6 +399,12 @@ func (b *bot) runTurn(ctx context.Context, channel, thread, prompt string) {
 		return
 	}
 	b.debugf("prompt sent to runtime channel=%s thread=%s", channel, thread)
+	if historyCursorReady {
+		ts.mu.Lock()
+		ts.historyCursor = nextHistoryCursor
+		ts.mu.Unlock()
+		b.debugf("slack history cursor advanced channel=%s thread=%s previous=%s next=%s", channel, thread, historyCursor, nextHistoryCursor)
+	}
 
 	b.consumeTurn(ctx, ts, turn, sess)
 }
@@ -484,6 +510,63 @@ func (b *bot) clearSession(ts *threadSession) {
 	defer ts.mu.Unlock()
 	ts.session = nil
 	b.debugf("cleared runtime session")
+}
+
+func (b *bot) promptWithSlackHistory(channel, thread, eventTS, cursor, prompt string) (string, string, error) {
+	messages, err := b.readSlackHistory(channel, thread, eventTS, cursor)
+	if err != nil {
+		return prompt, cursor, err
+	}
+	nextCursor := eventTS
+	if nextCursor == "" {
+		nextCursor = latestMessageTimestamp(messages, cursor)
+	}
+	context := renderSlackHistoryContext(messages, eventTS, b.botUserID)
+	if context == "" {
+		return prompt, nextCursor, nil
+	}
+	return fmt.Sprintf(
+		"Slack conversation context from human messages since the last cursor. Use it as background, but answer the current user request.\n\n%s\n\nCurrent user request:\n%s",
+		context,
+		prompt,
+	), nextCursor, nil
+}
+
+func (b *bot) readSlackHistory(channel, thread, eventTS, cursor string) ([]slack.Message, error) {
+	if thread != "" && thread != eventTS {
+		params := &slack.GetConversationRepliesParameters{
+			ChannelID: channel,
+			Timestamp: thread,
+			Inclusive: cursor == "",
+			Latest:    eventTS,
+			Limit:     historyMessageLimit,
+		}
+		if cursor != "" {
+			params.Oldest = cursor
+		}
+		messages, _, _, err := b.api.GetConversationReplies(params)
+		if err != nil {
+			return nil, fmt.Errorf("conversation replies: %w", err)
+		}
+		b.debugf("read slack thread history channel=%s thread=%s cursor=%s messages=%d", channel, thread, cursor, len(messages))
+		return chronologicalMessages(messages), nil
+	}
+
+	params := &slack.GetConversationHistoryParameters{
+		ChannelID: channel,
+		Inclusive: cursor == "",
+		Latest:    eventTS,
+		Limit:     historyMessageLimit,
+	}
+	if cursor != "" {
+		params.Oldest = cursor
+	}
+	resp, err := b.api.GetConversationHistory(params)
+	if err != nil {
+		return nil, fmt.Errorf("conversation history: %w", err)
+	}
+	b.debugf("read slack channel history channel=%s cursor=%s messages=%d", channel, cursor, len(resp.Messages))
+	return chronologicalMessages(resp.Messages), nil
 }
 
 func (b *bot) postActivity(turn *slackTurn, text string) error {
@@ -749,6 +832,55 @@ func stripSlackMarkup(text string) string {
 func cleanPrompt(text, botUserID string) string {
 	text = strings.ReplaceAll(text, "<@"+botUserID+">", "")
 	return strings.TrimSpace(text)
+}
+
+func chronologicalMessages(messages []slack.Message) []slack.Message {
+	ordered := append([]slack.Message(nil), messages...)
+	sort.Slice(ordered, func(i, j int) bool {
+		return ordered[i].Timestamp < ordered[j].Timestamp
+	})
+	return ordered
+}
+
+func renderSlackHistoryContext(messages []slack.Message, currentTS, botUserID string) string {
+	var lines []string
+	for _, msg := range messages {
+		if !isHumanSlackMessage(msg, botUserID) || msg.Timestamp == currentTS {
+			continue
+		}
+		text := cleanPrompt(msg.Text, botUserID)
+		if text == "" {
+			continue
+		}
+		lines = append(lines, fmt.Sprintf("- %s <@%s>: %s", msg.Timestamp, msg.User, text))
+	}
+	return limitHistoryContext(strings.Join(lines, "\n"))
+}
+
+func isHumanSlackMessage(msg slack.Message, botUserID string) bool {
+	return msg.User != "" &&
+		msg.User != botUserID &&
+		msg.BotID == "" &&
+		msg.SubType == "" &&
+		strings.TrimSpace(msg.Text) != ""
+}
+
+func latestMessageTimestamp(messages []slack.Message, fallback string) string {
+	latest := fallback
+	for _, msg := range messages {
+		if msg.Timestamp > latest {
+			latest = msg.Timestamp
+		}
+	}
+	return latest
+}
+
+func limitHistoryContext(text string) string {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) <= maxHistoryContextLen {
+		return string(runes)
+	}
+	return "[earlier Slack context truncated]\n" + string(runes[len(runes)-maxHistoryContextLen:])
 }
 
 func limitSlackText(text string) string {
