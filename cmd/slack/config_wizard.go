@@ -41,150 +41,11 @@ var (
 	wizardDividerStyle  = lipgloss.NewStyle().Foreground(wizardColDivider)
 )
 
-type tokenField struct {
-	name  string
-	input textinput.Model
-}
-
-type tokenPromptModel struct {
-	cfg      config
-	fields   []tokenField
-	focus    int
-	err      string
-	done     bool
-	canceled bool
-}
-
-func newTokenPromptModel(cfg config) *tokenPromptModel {
-	m := &tokenPromptModel{cfg: cfg}
-	if cfg.botToken == "" {
-		m.fields = append(m.fields, tokenField{name: "Slack bot token", input: tokenInput("xoxb-...")})
-	}
-	if cfg.appToken == "" {
-		m.fields = append(m.fields, tokenField{name: "Slack app token", input: tokenInput("xapp-...")})
-	}
-	if len(m.fields) > 0 {
-		m.fields[0].input.Focus()
-	}
-	return m
-}
-
-func tokenInput(placeholder string) textinput.Model {
-	ti := textinput.New()
-	ti.Placeholder = placeholder
-	ti.Prompt = "  "
-	ti.CharLimit = 4096
-	ti.Width = 72
-	ti.EchoMode = textinput.EchoPassword
-	styleTextInput(&ti)
-	return ti
-}
-
 func styleTextInput(ti *textinput.Model) {
 	ti.PromptStyle = wizardSelectedStyle
 	ti.TextStyle = wizardCopyStyle
 	ti.PlaceholderStyle = wizardFaintStyle
 	ti.Cursor.Style = wizardSelectedStyle
-}
-
-func (m *tokenPromptModel) Init() tea.Cmd {
-	return textinput.Blink
-}
-
-func (m *tokenPromptModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if key, ok := msg.(tea.KeyMsg); ok {
-		switch key.Type {
-		case tea.KeyCtrlC, tea.KeyEsc:
-			m.canceled = true
-			return m, tea.Quit
-		case tea.KeyTab, tea.KeyShiftTab, tea.KeyUp, tea.KeyDown:
-			m.moveFocus(key.Type)
-			return m, textinput.Blink
-		case tea.KeyEnter:
-			if !m.captureCurrentToken() {
-				return m, nil
-			}
-			if m.focus < len(m.fields)-1 {
-				m.moveFocus(tea.KeyDown)
-				return m, textinput.Blink
-			}
-			if !m.captureAllTokens() {
-				return m, textinput.Blink
-			}
-			m.done = true
-			return m, tea.Quit
-		}
-	}
-
-	var cmd tea.Cmd
-	m.fields[m.focus].input, cmd = m.fields[m.focus].input.Update(msg)
-	return m, cmd
-}
-
-func (m *tokenPromptModel) moveFocus(key tea.KeyType) {
-	if len(m.fields) == 0 {
-		return
-	}
-	m.fields[m.focus].input.Blur()
-	switch key {
-	case tea.KeyShiftTab, tea.KeyUp:
-		m.focus = (m.focus - 1 + len(m.fields)) % len(m.fields)
-	default:
-		m.focus = (m.focus + 1) % len(m.fields)
-	}
-	m.fields[m.focus].input.Focus()
-	m.err = ""
-}
-
-func (m *tokenPromptModel) captureCurrentToken() bool {
-	field := &m.fields[m.focus]
-	value := strings.TrimSpace(field.input.Value())
-	if value == "" {
-		m.err = field.name + " is required"
-		return false
-	}
-	switch field.name {
-	case "Slack bot token":
-		m.cfg.botToken = value
-	case "Slack app token":
-		m.cfg.appToken = value
-	}
-	m.err = ""
-	return true
-}
-
-func (m *tokenPromptModel) captureAllTokens() bool {
-	for i := range m.fields {
-		m.focus = i
-		if !m.captureCurrentToken() {
-			for j := range m.fields {
-				m.fields[j].input.Blur()
-			}
-			m.fields[i].input.Focus()
-			return false
-		}
-	}
-	return true
-}
-
-func (m *tokenPromptModel) View() string {
-	var b strings.Builder
-	b.WriteString(wizardHeader("Cula Slack setup", "Provide missing Slack tokens before choosing a runtime."))
-	for i, field := range m.fields {
-		label := "  " + field.name
-		if i == m.focus {
-			label = wizardSelectedStyle.Render("> " + field.name)
-		} else {
-			label = wizardMutedStyle.Render(label)
-		}
-		b.WriteString(label + "\n")
-		b.WriteString(field.input.View() + "\n\n")
-	}
-	if m.err != "" {
-		b.WriteString(wizardErrorStyle.Render("Error: "+m.err) + "\n\n")
-	}
-	b.WriteString(wizardHintStyle.Render("Tab switch field | Enter continue | Esc quit"))
-	return b.String()
 }
 
 type setupPhase int
@@ -443,25 +304,6 @@ func modelLine(model modelChoice, selected bool) string {
 }
 
 func configureInteractive(ctx context.Context, cfg config, registry *cula.Registry) (config, error) {
-	if cfg.botToken == "" || cfg.appToken == "" {
-		model := newTokenPromptModel(cfg)
-		final, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
-		if err != nil {
-			return config{}, fmt.Errorf("token prompt: %w", err)
-		}
-		result, ok := final.(*tokenPromptModel)
-		if !ok {
-			return config{}, fmt.Errorf("token prompt returned %T", final)
-		}
-		if result.canceled {
-			return config{}, fmt.Errorf("setup canceled")
-		}
-		if !result.done {
-			return config{}, fmt.Errorf("missing Slack token")
-		}
-		cfg = result.cfg
-	}
-
 	infos := registry.DetectAll(ctx)
 	infos = sortedRuntimeInfos(infos)
 	if selectedRuntimeIndex(infos, cfg.runtime) < 0 {

@@ -5,30 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
 	cula "github.com/git-hulk/cula/pkg"
 )
-
-func TestTokenPromptCapturesAllFieldsAfterTabbing(t *testing.T) {
-	m := newTokenPromptModel(config{})
-	if len(m.fields) != 2 {
-		t.Fatalf("fields = %d, want 2", len(m.fields))
-	}
-
-	m.fields[0].input.SetValue("xoxb-test")
-	m.moveFocus(tea.KeyDown)
-	m.fields[1].input.SetValue("xapp-test")
-
-	if !m.captureAllTokens() {
-		t.Fatalf("captureAllTokens failed: %s", m.err)
-	}
-	if m.cfg.botToken != "xoxb-test" {
-		t.Fatalf("bot token = %q", m.cfg.botToken)
-	}
-	if m.cfg.appToken != "xapp-test" {
-		t.Fatalf("app token = %q", m.cfg.appToken)
-	}
-}
 
 func TestSelectedRuntimeIndexPrefersInstalledRuntime(t *testing.T) {
 	infos := []cula.RuntimeInfo{

@@ -31,6 +31,9 @@ const (
 	maxHistoryContextLen   = 12000
 	maxSlackTextLen        = 39000
 	maxSlackBlockTextLen   = 2900
+
+	actionCancelTurn = "cula_cancel_turn"
+	actionRetryTurn  = "cula_retry_turn"
 )
 
 type config struct {
@@ -61,6 +64,8 @@ type threadSession struct {
 	sessionID     string
 	historyCursor string
 	busy          bool
+	lastPrompt    string
+	lastEventTS   string
 }
 
 type slackTurn struct {
@@ -155,6 +160,12 @@ func loadConfig() (config, error) {
 		sandbox:    cula.SandboxMode(strings.TrimSpace(os.Getenv("CULA_SANDBOX"))),
 		debug:      strings.EqualFold(strings.TrimSpace(os.Getenv("CULA_SLACK_DEBUG")), "true"),
 	}
+	if cfg.botToken == "" {
+		return config{}, fmt.Errorf("SLACK_BOT_TOKEN is required")
+	}
+	if cfg.appToken == "" {
+		return config{}, fmt.Errorf("SLACK_APP_TOKEN is required")
+	}
 	if rt := strings.TrimSpace(os.Getenv("CULA_RUNTIME")); rt != "" {
 		cfg.runtime = cula.RuntimeKind(rt)
 	}
@@ -238,6 +249,12 @@ func (b *bot) handleSocketEvent(ctx context.Context, evt socketmode.Event) {
 		} else {
 			b.debugf("interactive socket event has no request to ack")
 		}
+		cb, ok := evt.Data.(slack.InteractionCallback)
+		if !ok {
+			b.debugf("dropping interactive payload: data_type=%T", evt.Data)
+			return
+		}
+		b.handleInteractive(ctx, cb)
 	default:
 		b.debugf("ignoring socket event type=%s", evt.Type)
 	}
@@ -323,7 +340,7 @@ func (b *bot) runTurn(ctx context.Context, channel, thread, eventTS, prompt stri
 		_, _, err := b.api.PostMessage(
 			channel,
 			slack.MsgOptionText("Still working on the previous request in this thread.", false),
-			slack.MsgOptionBlocks(statusBlocks(":hourglass_flowing_sand: *Still working*\nThe previous request in this thread is not finished yet.")...),
+			slack.MsgOptionBlocks(statusBlocks(":hourglass_flowing_sand: *Still working*\nThe previous request in this thread is not finished yet.", "", "")...),
 			slack.MsgOptionTS(thread),
 			slack.MsgOptionDisableLinkUnfurl(),
 			slack.MsgOptionDisableMediaUnfurl(),
@@ -332,6 +349,8 @@ func (b *bot) runTurn(ctx context.Context, channel, thread, eventTS, prompt stri
 		return
 	}
 	ts.busy = true
+	ts.lastPrompt = prompt
+	ts.lastEventTS = eventTS
 	sess := ts.session
 	sessionID := ts.sessionID
 	historyCursor := ts.historyCursor
@@ -506,6 +525,88 @@ func (b *bot) thread(channel, thread string) *threadSession {
 	return ts
 }
 
+func (b *bot) lookupThread(channel, thread string) *threadSession {
+	key := channel + "\x00" + thread
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.threads[key]
+}
+
+func (b *bot) handleInteractive(ctx context.Context, cb slack.InteractionCallback) {
+	if cb.Type != slack.InteractionTypeBlockActions {
+		b.debugf("ignoring interactive callback type=%s", cb.Type)
+		return
+	}
+	for _, action := range cb.ActionCallback.BlockActions {
+		if action == nil {
+			continue
+		}
+		channel, thread, ok := decodeThreadValue(action.Value)
+		if !ok {
+			b.debugf("invalid thread value action_id=%s value=%q", action.ActionID, action.Value)
+			continue
+		}
+		switch action.ActionID {
+		case actionCancelTurn:
+			b.cancelTurn(channel, thread, cb.User.ID)
+		case actionRetryTurn:
+			go b.retryTurn(ctx, channel, thread, cb.User.ID)
+		default:
+			b.debugf("ignoring action_id=%s block_id=%s", action.ActionID, action.BlockID)
+		}
+	}
+}
+
+func (b *bot) cancelTurn(channel, thread, userID string) {
+	ts := b.lookupThread(channel, thread)
+	if ts == nil {
+		b.debugf("cancel ignored: no thread session channel=%s thread=%s", channel, thread)
+		return
+	}
+	ts.mu.Lock()
+	sess := ts.session
+	busy := ts.busy
+	ts.mu.Unlock()
+	if !busy || sess == nil {
+		b.debugf("cancel ignored: idle channel=%s thread=%s", channel, thread)
+		return
+	}
+	b.debugf("cancel requested channel=%s thread=%s user=%s", channel, thread, userID)
+	if err := sess.Cancel(context.Background()); err != nil {
+		logSlackError("cancel session", err)
+	}
+}
+
+func (b *bot) retryTurn(ctx context.Context, channel, thread, userID string) {
+	ts := b.lookupThread(channel, thread)
+	if ts == nil {
+		b.debugf("retry ignored: no thread session channel=%s thread=%s", channel, thread)
+		return
+	}
+	ts.mu.Lock()
+	prompt := ts.lastPrompt
+	eventTS := ts.lastEventTS
+	ts.mu.Unlock()
+	if prompt == "" {
+		b.debugf("retry ignored: no prompt to replay channel=%s thread=%s", channel, thread)
+		return
+	}
+	b.debugf("retry requested channel=%s thread=%s user=%s prompt_len=%d", channel, thread, userID, runeLen(prompt))
+	b.runTurn(ctx, channel, thread, eventTS, prompt, false)
+}
+
+func encodeThreadValue(channel, thread string) string {
+	return channel + "|" + thread
+}
+
+func decodeThreadValue(value string) (string, string, bool) {
+	idx := strings.IndexByte(value, '|')
+	if idx <= 0 || idx == len(value)-1 {
+		return "", "", false
+	}
+	return value[:idx], value[idx+1:], true
+}
+
 func (b *bot) clearSession(ts *threadSession) {
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
@@ -575,7 +676,7 @@ func (b *bot) postActivity(turn *slackTurn, text string) error {
 	_, ts, err := b.api.PostMessage(
 		turn.channel,
 		slack.MsgOptionText(activityFallback(text), false),
-		slack.MsgOptionBlocks(statusBlocks(text)...),
+		slack.MsgOptionBlocks(statusBlocks(text, turn.channel, turn.thread)...),
 		slack.MsgOptionTS(turn.thread),
 		slack.MsgOptionDisableLinkUnfurl(),
 		slack.MsgOptionDisableMediaUnfurl(),
@@ -608,7 +709,7 @@ func (b *bot) updateActivity(turn *slackTurn, text string, force bool) {
 		turn.channel,
 		turn.activityTS,
 		slack.MsgOptionText(activityFallback(text), false),
-		slack.MsgOptionBlocks(statusBlocks(text)...),
+		slack.MsgOptionBlocks(statusBlocks(text, turn.channel, turn.thread)...),
 		slack.MsgOptionDisableLinkUnfurl(),
 		slack.MsgOptionDisableMediaUnfurl(),
 	)
@@ -661,7 +762,7 @@ func (b *bot) upsertAnswer(turn *slackTurn, text string) {
 		_, turn.answerTS, err = b.api.PostMessage(
 			turn.channel,
 			slack.MsgOptionText(text, false),
-			slack.MsgOptionBlocks(b.answerBlocks(text)...),
+			slack.MsgOptionBlocks(b.answerBlocks(text, turn.channel, turn.thread)...),
 			slack.MsgOptionTS(turn.thread),
 			slack.MsgOptionDisableLinkUnfurl(),
 			slack.MsgOptionDisableMediaUnfurl(),
@@ -675,7 +776,7 @@ func (b *bot) upsertAnswer(turn *slackTurn, text string) {
 			turn.channel,
 			turn.answerTS,
 			slack.MsgOptionText(text, false),
-			slack.MsgOptionBlocks(b.answerBlocks(text)...),
+			slack.MsgOptionBlocks(b.answerBlocks(text, turn.channel, turn.thread)...),
 			slack.MsgOptionDisableLinkUnfurl(),
 			slack.MsgOptionDisableMediaUnfurl(),
 		)
@@ -729,19 +830,37 @@ func toolActivityText(name string) string {
 	return ":hammer_and_wrench: *Using tool*\n`" + inlineCode(name) + "`"
 }
 
-func statusBlocks(text string) []slack.Block {
-	return []slack.Block{
+func statusBlocks(text, cancelChannel, cancelThread string) []slack.Block {
+	blocks := []slack.Block{
 		slack.NewContextBlock("", slackMrkdwn(":robot_face: *Cula status*")),
 		slack.NewSectionBlock(slackMrkdwn(limitSlackBlockText(text)), nil, nil, slack.SectionBlockOptionExpand(true)),
 	}
+	if cancelChannel != "" && cancelThread != "" {
+		btn := slack.NewButtonBlockElement(
+			actionCancelTurn,
+			encodeThreadValue(cancelChannel, cancelThread),
+			slack.NewTextBlockObject(slack.PlainTextType, "Cancel", false, false),
+		)
+		btn.Style = slack.StyleDanger
+		blocks = append(blocks, slack.NewActionBlock("cula_status_actions", btn))
+	}
+	return blocks
 }
 
-func (b *bot) answerBlocks(text string) []slack.Block {
+func (b *bot) answerBlocks(text, retryChannel, retryThread string) []slack.Block {
 	blocks := []slack.Block{
 		slack.NewContextBlock("", slackMrkdwn(fmt.Sprintf(":robot_face: *Cula* | %s | %s", b.cfg.runtime, valueOr(b.cfg.model, "default")))),
 	}
 	for _, chunk := range splitSlackBlockText(text) {
 		blocks = append(blocks, slack.NewSectionBlock(slackMrkdwn(chunk), nil, nil, slack.SectionBlockOptionExpand(true)))
+	}
+	if retryChannel != "" && retryThread != "" {
+		btn := slack.NewButtonBlockElement(
+			actionRetryTurn,
+			encodeThreadValue(retryChannel, retryThread),
+			slack.NewTextBlockObject(slack.PlainTextType, "Retry", false, false),
+		)
+		blocks = append(blocks, slack.NewActionBlock("cula_answer_actions", btn))
 	}
 	return blocks
 }

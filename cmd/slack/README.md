@@ -26,6 +26,7 @@ prompt and final assistant response, not the transient progress log.
 Create a Slack app with:
 
 - Socket Mode enabled.
+- Interactivity enabled (no Request URL is needed in Socket Mode).
 - An app-level token with the `connections:write` scope.
 - A bot token with these bot scopes:
   - `app_mentions:read`
@@ -47,8 +48,7 @@ to mention it.
 ## Run
 
 ```bash
-# Optional. If either token is missing, the setup wizard prompts for it before
-# runtime selection.
+# Required. The bot will refuse to start if either is missing.
 export SLACK_BOT_TOKEN=xoxb-...
 export SLACK_APP_TOKEN=xapp-...
 
@@ -60,9 +60,9 @@ export CULA_WORKDIR=/path/to/project
 go run ./cmd/slack
 ```
 
-On startup, the command opens an interactive setup wizard. It asks for any
-missing Slack bot/app tokens first, then lets you choose the installed runtime,
-model, and working directory for Slack requests.
+On startup, the command opens an interactive setup wizard for choosing the
+installed runtime, model, and working directory for Slack requests. The Slack
+bot/app tokens must be provided via the environment variables above.
 
 Supported `CULA_RUNTIME` values are:
 
