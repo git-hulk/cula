@@ -16,6 +16,7 @@ import (
 	"github.com/git-hulk/cula/internal/runtime/claudecode"
 	"github.com/git-hulk/cula/internal/runtime/codex"
 	"github.com/git-hulk/cula/internal/runtime/copilot"
+	"github.com/git-hulk/cula/internal/runtime/hermes"
 	"github.com/git-hulk/cula/internal/runtime/opencode"
 	cula "github.com/git-hulk/cula/pkg"
 	"github.com/slack-go/slack"
@@ -87,6 +88,7 @@ func main() {
 		codex.New(cula.Config{}),
 		opencode.New(cula.Config{}),
 		copilot.New(cula.Config{}),
+		hermes.New(cula.Config{}),
 	)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -157,7 +159,7 @@ func loadConfig() (config, error) {
 		cfg.runtime = cula.RuntimeKind(rt)
 	}
 	switch cfg.runtime {
-	case cula.RuntimeClaudeCode, cula.RuntimeCodex, cula.RuntimeOpenCode, cula.RuntimeCopilot:
+	case cula.RuntimeClaudeCode, cula.RuntimeCodex, cula.RuntimeOpenCode, cula.RuntimeCopilot, cula.RuntimeHermes:
 	default:
 		return config{}, fmt.Errorf("unsupported CULA_RUNTIME %q", cfg.runtime)
 	}

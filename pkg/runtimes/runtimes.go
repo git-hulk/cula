@@ -21,6 +21,7 @@ import (
 	"github.com/git-hulk/cula/internal/runtime/claudecode"
 	"github.com/git-hulk/cula/internal/runtime/codex"
 	"github.com/git-hulk/cula/internal/runtime/copilot"
+	"github.com/git-hulk/cula/internal/runtime/hermes"
 	"github.com/git-hulk/cula/internal/runtime/opencode"
 	cula "github.com/git-hulk/cula/pkg"
 )
@@ -35,6 +36,7 @@ func DefaultRegistry(opts ...cula.RuntimeOption) *cula.Registry {
 		NewCodex(opts...),
 		NewOpenCode(opts...),
 		NewCopilot(opts...),
+		NewHermes(opts...),
 	)
 }
 
@@ -57,6 +59,11 @@ func NewOpenCode(opts ...cula.RuntimeOption) cula.Runtime {
 // NewCopilot returns the built-in GitHub Copilot CLI runtime.
 func NewCopilot(opts ...cula.RuntimeOption) cula.Runtime {
 	return copilot.New(buildConfig(opts))
+}
+
+// NewHermes returns the built-in Hermes Agent runtime.
+func NewHermes(opts ...cula.RuntimeOption) cula.Runtime {
+	return hermes.New(buildConfig(opts))
 }
 
 func buildConfig(opts []cula.RuntimeOption) cula.Config {

@@ -493,6 +493,7 @@ func sortedRuntimeInfos(infos []cula.RuntimeInfo) []cula.RuntimeInfo {
 		cula.RuntimeCodex:      1,
 		cula.RuntimeOpenCode:   2,
 		cula.RuntimeCopilot:    3,
+		cula.RuntimeHermes:     4,
 	}
 	sort.Slice(out, func(i, j int) bool {
 		oi, ok := order[out[i].Kind]
