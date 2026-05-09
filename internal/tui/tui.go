@@ -193,12 +193,13 @@ func (m *Model) Init() tea.Cmd {
 func (m *Model) detectRuntimes() tea.Cmd {
 	return func() tea.Msg {
 		infos := m.cfg.Registry.DetectAll(context.Background())
-		// stable order: claude-code, codex, opencode, copilot
+		// stable order: claude-code, codex, opencode, copilot, hermes
 		order := map[cula.RuntimeKind]int{
 			cula.RuntimeClaudeCode: 0,
 			cula.RuntimeCodex:      1,
 			cula.RuntimeOpenCode:   2,
 			cula.RuntimeCopilot:    3,
+			cula.RuntimeHermes:     4,
 		}
 		sort.Slice(infos, func(i, j int) bool {
 			return order[infos[i].Kind] < order[infos[j].Kind]

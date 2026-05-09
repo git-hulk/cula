@@ -9,6 +9,7 @@ import (
 	"github.com/git-hulk/cula/internal/runtime/claudecode"
 	"github.com/git-hulk/cula/internal/runtime/codex"
 	"github.com/git-hulk/cula/internal/runtime/copilot"
+	"github.com/git-hulk/cula/internal/runtime/hermes"
 	"github.com/git-hulk/cula/internal/runtime/opencode"
 	"github.com/git-hulk/cula/internal/tui"
 	cula "github.com/git-hulk/cula/pkg"
@@ -26,6 +27,7 @@ func main() {
 		codex.New(cula.Config{}),
 		opencode.New(cula.Config{}),
 		copilot.New(cula.Config{}),
+		hermes.New(cula.Config{}),
 	)
 
 	model := tui.New(tui.Config{

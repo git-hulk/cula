@@ -18,7 +18,7 @@ Use it to talk to whichever agent the user has installed without writing per-CLI
 
 The bundled `cula` TUI is a reference example, not the product. It exists to show how the library wires multiple agents into a single UI:
 
-- **Detect** which runtimes are installed and pick one (Claude Code / Codex / OpenCode) from a single picker.
+- **Detect** which runtimes are installed and pick one (Claude Code / Codex / OpenCode / Copilot / Hermes) from a single picker.
 - **Configure** the working directory and model, then **spawn** a session through the same `Registry` regardless of which CLI backs it.
 - **Render** the normalized event stream — assistant text, reasoning, tool calls, activity, and state transitions — in one consistent chat view, so every runtime looks and behaves the same.
 
@@ -81,6 +81,22 @@ for ev := range session.Events() {
 - Codex
 - OpenCode
 - GitHub Copilot CLI
+- Hermes Agent (via the local API server)
+
+### Hermes Agent runtime
+
+The Hermes runtime talks to a local Hermes API Server. Start Hermes with the
+API server enabled, then select `hermes` in cula:
+
+```bash
+API_SERVER_ENABLED=true API_SERVER_KEY='[REDACTED]' hermes gateway run
+
+HERMES_API_KEY='[REDACTED]' cula
+```
+
+By default cula connects to `http://127.0.0.1:8642`. Override it with
+`HERMES_API_BASE_URL`, or reuse Hermes gateway variables such as
+`API_SERVER_HOST`, `API_SERVER_PORT`, and `API_SERVER_KEY`.
 
 Welcome to submit an issue/PR if you want more runtimes to be supported.
 
