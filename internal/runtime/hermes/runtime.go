@@ -4,12 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"os/exec"
-	"regexp"
 	"strings"
 	"time"
 
-	iruntime "github.com/git-hulk/cula/internal/runtime"
 	cula "github.com/git-hulk/cula/pkg"
 )
 
@@ -30,31 +27,20 @@ func (r *Runtime) Kind() cula.RuntimeKind {
 }
 
 func (r *Runtime) Detect(ctx context.Context) (cula.RuntimeInfo, error) {
-	binary := iruntime.BinaryPath(r.cfg, "hermes")
-	info := iruntime.LookupRuntime(binary, "hermes", cula.RuntimeHermes, "Hermes Agent")
-	if info.Installed {
-		if out, err := exec.CommandContext(ctx, binary, "--version").Output(); err == nil {
-			re := regexp.MustCompile(`(\d+\.\d+\.\d+)`)
-			if m := re.FindStringSubmatch(string(out)); len(m) > 1 {
-				info.Version = m[1]
-			} else {
-				info.Version = strings.TrimSpace(string(out))
-			}
-		}
+	info := cula.RuntimeInfo{
+		Kind:       cula.RuntimeHermes,
+		Name:       "Hermes Agent",
+		AuthStatus: cula.AuthNotInstalled,
+	}
+	if strings.TrimSpace(apiKey(r.cfg, cula.SessionInput{})) == "" {
+		return info, nil
 	}
 
 	models, status := r.detectAPI(ctx)
-	if status != cula.AuthUnknown {
+	info.AuthStatus = status
+	if status == cula.AuthLoggedIn {
 		info.Installed = true
-		info.AuthStatus = status
 		info.Models = models
-		if info.BinaryPath == "" {
-			info.Name = "Hermes Agent"
-		}
-		return info, nil
-	}
-	if info.Installed && info.AuthStatus == cula.AuthUnknown {
-		info.AuthStatus = cula.AuthUnknown
 	}
 	return info, nil
 }
@@ -119,10 +105,7 @@ func envValue(cfgEnv, inputEnv []string, key, fallback string) string {
 }
 
 func apiKey(cfg cula.Config, input cula.SessionInput) string {
-	if key := envValue(cfg.Env, input.Env, "HERMES_API_KEY", ""); key != "" {
-		return key
-	}
-	return envValue(cfg.Env, input.Env, "API_SERVER_KEY", "")
+	return envValue(cfg.Env, input.Env, "HERMES_API_KEY", "")
 }
 
 func apiBaseURL(cfg cula.Config, input cula.SessionInput) string {
@@ -131,17 +114,6 @@ func apiBaseURL(cfg cula.Config, input cula.SessionInput) string {
 	}
 	if base := envValue(cfg.Env, input.Env, "API_SERVER_BASE_URL", ""); base != "" {
 		return strings.TrimRight(base, "/")
-	}
-	host := envValue(cfg.Env, input.Env, "API_SERVER_HOST", "")
-	port := envValue(cfg.Env, input.Env, "API_SERVER_PORT", "")
-	if host != "" || port != "" {
-		if host == "" {
-			host = "127.0.0.1"
-		}
-		if port == "" {
-			port = "8642"
-		}
-		return "http://" + host + ":" + port
 	}
 	return defaultBaseURL
 }

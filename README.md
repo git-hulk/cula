@@ -95,8 +95,8 @@ HERMES_API_KEY='[REDACTED]' cula
 ```
 
 By default cula connects to `http://127.0.0.1:8642`. Override it with
-`HERMES_API_BASE_URL`, or reuse Hermes gateway variables such as
-`API_SERVER_HOST`, `API_SERVER_PORT`, and `API_SERVER_KEY`.
+`HERMES_API_BASE_URL`. The Hermes runtime reads the client credential from
+`HERMES_API_KEY` only.
 
 Welcome to submit an issue/PR if you want more runtimes to be supported.
 
