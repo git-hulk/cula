@@ -161,6 +161,10 @@ func (m *runtimeSetupModel) updateRuntimeKey(key tea.KeyMsg) (tea.Model, tea.Cmd
 			return m, nil
 		}
 		m.cfg.runtime = info.Kind
+		if info.Kind == cula.RuntimeHermes {
+			m.done = true
+			return m, tea.Quit
+		}
 		m.models = modelChoices(info.Models, m.cfg.model)
 		m.modelIdx = selectedModelIndex(m.models, m.cfg.model)
 		m.phase = setupSelectModel
