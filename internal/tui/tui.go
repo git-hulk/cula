@@ -586,25 +586,36 @@ func (m *Model) handleEvent(ev cula.Event) {
 		m.dropTurnActivity()
 		m.input.Focus()
 	case cula.EventText:
-		text := strings.TrimSpace(ev.Text)
-		if text == "" {
+		if ev.Text == "" {
 			return
 		}
 		m.activity = nil
 		m.dropThinkingBlocks()
 		// Merge with the most recent assistant text block in this turn so
 		// interleaved tool calls (edits/writes go to the permanent transcript)
-		// don't split a single reply into multiple bubbles.
+		// don't split a single reply into multiple bubbles. Streaming runtimes
+		// (e.g. Hermes) emit one EventText per token, so when the new chunk
+		// directly follows the existing text block we concatenate it inline;
+		// otherwise (tool calls / activities between) we keep the paragraph
+		// break that delineates separate assistant turns.
 		for i := len(m.blocks) - 1; i >= 0; i-- {
 			if m.blocks[i].kind == blkUser {
 				break
 			}
 			if m.blocks[i].kind == blkText {
-				m.blocks[i].body += "\n\n" + text
+				sep := ""
+				if i != len(m.blocks)-1 {
+					sep = "\n\n"
+				}
+				m.blocks[i].body += sep + ev.Text
 				return
 			}
 		}
-		m.appendBlock(block{kind: blkText, body: text, timestamp: time.Now()})
+		body := strings.TrimLeft(ev.Text, " \t\r\n")
+		if body == "" {
+			return
+		}
+		m.appendBlock(block{kind: blkText, body: body, timestamp: time.Now()})
 	case cula.EventActivity:
 		if ev.Activity == nil {
 			return
