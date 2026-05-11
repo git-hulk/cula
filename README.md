@@ -85,17 +85,8 @@ for ev := range session.Events() {
 
 ### Hermes Agent runtime
 
-The Hermes runtime talks to a local Hermes API Server. Start Hermes with the
-API server enabled, then select `hermes` in cula:
-
-```bash
-API_SERVER_ENABLED=true API_SERVER_KEY='[REDACTED]' hermes gateway run
-
-HERMES_API_KEY='[REDACTED]' cula
-```
-
-By default cula connects to `http://127.0.0.1:8642`. Override it with
-`HERMES_API_BASE_URL`. The Hermes runtime reads the client credential from
+The Hermes runtime talks to a local Hermes API Server. By default cula connects to
+`http://127.0.0.1:8642`. Override it with `HERMES_API_BASE_URL`. The Hermes runtime reads the client credential from
 `HERMES_API_KEY` only.
 
 Welcome to submit an issue/PR if you want more runtimes to be supported.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -32,7 +33,7 @@ func (r *Runtime) Detect(ctx context.Context) (cula.RuntimeInfo, error) {
 		Name:       "Hermes Agent",
 		AuthStatus: cula.AuthNotInstalled,
 	}
-	if strings.TrimSpace(apiKey(r.cfg, cula.SessionInput{})) == "" {
+	if strings.TrimSpace(apiKey()) == "" {
 		return info, nil
 	}
 
@@ -47,11 +48,11 @@ func (r *Runtime) Detect(ctx context.Context) (cula.RuntimeInfo, error) {
 
 func (r *Runtime) detectAPI(ctx context.Context) ([]cula.Model, cula.AuthStatus) {
 	client := &http.Client{Timeout: 2 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBaseURL(r.cfg, cula.SessionInput{})+"/v1/models", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiBaseURL()+"/v1/models", nil)
 	if err != nil {
 		return nil, cula.AuthUnknown
 	}
-	addAuth(req, apiKey(r.cfg, cula.SessionInput{}))
+	addAuth(req, apiKey())
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, cula.AuthUnknown
@@ -89,30 +90,12 @@ func (r *Runtime) SpawnSession(ctx context.Context, input cula.SessionInput) (cu
 	return newSession(ctx, r, input)
 }
 
-func envValue(cfgEnv, inputEnv []string, key, fallback string) string {
-	prefix := key + "="
-	for i := len(inputEnv) - 1; i >= 0; i-- {
-		if strings.HasPrefix(inputEnv[i], prefix) {
-			return strings.TrimPrefix(inputEnv[i], prefix)
-		}
-	}
-	for i := len(cfgEnv) - 1; i >= 0; i-- {
-		if strings.HasPrefix(cfgEnv[i], prefix) {
-			return strings.TrimPrefix(cfgEnv[i], prefix)
-		}
-	}
-	return fallback
+func apiKey() string {
+	return os.Getenv("HERMES_API_KEY")
 }
 
-func apiKey(cfg cula.Config, input cula.SessionInput) string {
-	return envValue(cfg.Env, input.Env, "HERMES_API_KEY", "")
-}
-
-func apiBaseURL(cfg cula.Config, input cula.SessionInput) string {
-	if base := envValue(cfg.Env, input.Env, "HERMES_API_BASE_URL", ""); base != "" {
-		return strings.TrimRight(base, "/")
-	}
-	if base := envValue(cfg.Env, input.Env, "API_SERVER_BASE_URL", ""); base != "" {
+func apiBaseURL() string {
+	if base := strings.TrimSpace(os.Getenv("HERMES_API_BASE_URL")); base != "" {
 		return strings.TrimRight(base, "/")
 	}
 	return defaultBaseURL

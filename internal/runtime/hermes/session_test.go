@@ -55,7 +55,9 @@ func TestSessionStartsRunAndStreamsEvents(t *testing.T) {
 	}))
 	defer server.Close()
 
-	rt := New(cula.Config{Env: []string{"HERMES_API_BASE_URL=" + server.URL, "HERMES_API_KEY=secret"}})
+	t.Setenv("HERMES_API_BASE_URL", server.URL)
+	t.Setenv("HERMES_API_KEY", "secret")
+	rt := New(cula.Config{})
 	sess, err := rt.SpawnSession(context.Background(), cula.SessionInput{
 		Prompt:    "hello",
 		SessionID: "session-1",
@@ -121,7 +123,9 @@ func TestSessionDoesNotDuplicateCompletedOutputAfterDeltas(t *testing.T) {
 	}))
 	defer server.Close()
 
-	rt := New(cula.Config{Env: []string{"HERMES_API_BASE_URL=" + server.URL}})
+	t.Setenv("HERMES_API_BASE_URL", server.URL)
+	t.Setenv("HERMES_API_KEY", "")
+	rt := New(cula.Config{})
 	sess, err := rt.SpawnSession(context.Background(), cula.SessionInput{Prompt: "hello"})
 	if err != nil {
 		t.Fatalf("SpawnSession: %v", err)

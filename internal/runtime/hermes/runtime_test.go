@@ -10,13 +10,17 @@ import (
 )
 
 func TestAPIConfigUsesHermesAPIKeyOnly(t *testing.T) {
-	if got := apiKey(cula.Config{Env: []string{"API_SERVER_KEY=gateway-secret"}}, cula.SessionInput{}); got != "" {
+	t.Setenv("API_SERVER_KEY", "gateway-secret")
+	t.Setenv("HERMES_API_KEY", "")
+	if got := apiKey(); got != "" {
 		t.Fatalf("apiKey should ignore API_SERVER_KEY fallback, got %q", got)
 	}
-	if got := apiKey(cula.Config{Env: []string{"HERMES_API_KEY=hermes-secret"}}, cula.SessionInput{}); got != "hermes-secret" {
+	t.Setenv("HERMES_API_KEY", "hermes-secret")
+	if got := apiKey(); got != "hermes-secret" {
 		t.Fatalf("apiKey = %q", got)
 	}
-	if got := apiBaseURL(cula.Config{}, cula.SessionInput{}); got != defaultBaseURL {
+	t.Setenv("HERMES_API_BASE_URL", "")
+	if got := apiBaseURL(); got != defaultBaseURL {
 		t.Fatalf("apiBaseURL default = %q", got)
 	}
 }
@@ -34,7 +38,9 @@ func TestDetectUsesAPIModelsWhenReachable(t *testing.T) {
 	}))
 	defer server.Close()
 
-	rt := New(cula.Config{BinaryPath: "/definitely/not/hermes", Env: []string{"HERMES_API_BASE_URL=" + server.URL, "HERMES_API_KEY=secret"}})
+	t.Setenv("HERMES_API_BASE_URL", server.URL)
+	t.Setenv("HERMES_API_KEY", "secret")
+	rt := New(cula.Config{BinaryPath: "/definitely/not/hermes"})
 	info, err := rt.Detect(context.Background())
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
@@ -62,7 +68,10 @@ func TestDetectDoesNotReportHermesWithoutHermesAPIKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	rt := New(cula.Config{Env: []string{"HERMES_API_BASE_URL=" + server.URL, "API_SERVER_KEY=gateway-secret"}})
+	t.Setenv("HERMES_API_BASE_URL", server.URL)
+	t.Setenv("HERMES_API_KEY", "")
+	t.Setenv("API_SERVER_KEY", "gateway-secret")
+	rt := New(cula.Config{})
 	info, err := rt.Detect(context.Background())
 	if err != nil {
 		t.Fatalf("Detect: %v", err)
