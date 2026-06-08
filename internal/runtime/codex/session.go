@@ -254,7 +254,7 @@ func (s *session) readStdout(scanner *bufio.Scanner) {
 		}
 		ev, ok := ParseEvent(raw)
 		if !ok {
-			ev = cula.Event{Type: cula.EventRaw}
+			continue
 		}
 		s.emitEvent(raw, ev)
 	}
@@ -311,11 +311,9 @@ func (s *session) readJSONRPCResponse(scanner *bufio.Scanner, requestID int64, f
 		if forward {
 			var raw json.RawMessage
 			if json.Unmarshal(line, &raw) == nil {
-				ev, ok := ParseEvent(raw)
-				if !ok {
-					ev = cula.Event{Type: cula.EventRaw}
+				if ev, ok := ParseEvent(raw); ok {
+					s.emitEvent(raw, ev)
 				}
-				s.emitEvent(raw, ev)
 			}
 		}
 	}

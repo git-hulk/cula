@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -16,17 +17,32 @@ func ParseEvent(raw json.RawMessage) (cula.Event, bool) {
 }
 
 type event struct {
-	Method string `json:"method"`
-	Params params `json:"params"`
+	Method string          `json:"method"`
+	Params json.RawMessage `json:"params"`
 }
 
 type params struct {
-	Item *item `json:"item"`
-	Turn *turn `json:"turn"`
+	Item       *item       `json:"item"`
+	Turn       *turn       `json:"turn"`
+	TokenUsage *tokenUsage `json:"tokenUsage"`
 }
 
 type turn struct {
 	Status string `json:"status"`
+}
+
+type tokenUsage struct {
+	Total              tokenStats `json:"total"`
+	Last               tokenStats `json:"last"`
+	ModelContextWindow int        `json:"modelContextWindow"`
+}
+
+type tokenStats struct {
+	TotalTokens           int `json:"totalTokens"`
+	InputTokens           int `json:"inputTokens"`
+	CachedInputTokens     int `json:"cachedInputTokens"`
+	OutputTokens          int `json:"outputTokens"`
+	ReasoningOutputTokens int `json:"reasoningOutputTokens"`
 }
 
 type item struct {
@@ -47,22 +63,74 @@ func (p eventParser) parse(raw json.RawMessage) (cula.Event, bool) {
 	if json.Unmarshal(raw, &ev) != nil || ev.Method == "" {
 		return cula.Event{}, false
 	}
+	if ev.Method == "item/agentMessage/delta" {
+		// Codex streams the in-progress assistant reply token-by-token via
+		// this method and then republishes the consolidated text once on
+		// item/completed (phase=final_answer or commentary). We surface only
+		// the completed payload so downstream consumers (TUI, Slack) don't
+		// have to coalesce partial fragments, so ignore the streaming deltas.
+		return cula.Event{}, false
+	}
+	var pp params
+	_ = json.Unmarshal(ev.Params, &pp)
 	switch ev.Method {
 	case "turn/completed":
-		if ev.Params.Turn == nil || ev.Params.Turn.Status == "" {
-			return cula.Event{}, false
+		if pp.Turn != nil && pp.Turn.Status != "" {
+			return cula.Event{Type: cula.EventDone}, true
 		}
-		return cula.Event{Type: cula.EventDone}, true
 	case "item/started":
-		if ev.Params.Item != nil {
-			return p.itemEvent(ev.Params.Item, false)
+		if pp.Item != nil {
+			if out, ok := p.itemEvent(pp.Item, false); ok {
+				return out, true
+			}
 		}
 	case "item/completed":
-		if ev.Params.Item != nil {
-			return p.completedItemEvent(ev.Params.Item)
+		if pp.Item != nil {
+			if out, ok := p.completedItemEvent(pp.Item); ok {
+				return out, true
+			}
+		}
+	case "thread/tokenUsage/updated":
+		if pp.TokenUsage != nil {
+			return cula.Event{Type: cula.EventActivity, Activity: &cula.Activity{
+				Type:       cula.ActivityNarration,
+				Parameters: []string{formatTokenUsage(pp.TokenUsage)},
+			}}, true
 		}
 	}
-	return cula.Event{}, false
+	// Fall-through: an unknown method, or a known method whose body
+	// didn't match our schema. Surface it as EventRaw so callers can
+	// still inspect the payload — but drop entries with no body to keep
+	// the stream tidy.
+	if isEmptyBody(ev.Params) {
+		return cula.Event{}, false
+	}
+	return cula.Event{Type: cula.EventRaw}, true
+}
+
+func isEmptyBody(p json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(p)
+	switch string(trimmed) {
+	case "", "null", "{}", "[]":
+		return true
+	}
+	return false
+}
+
+func formatTokenUsage(u *tokenUsage) string {
+	parts := []string{fmt.Sprintf("tokens %d", u.Total.TotalTokens)}
+	if u.ModelContextWindow > 0 {
+		parts[0] = fmt.Sprintf("tokens %d/%d", u.Total.TotalTokens, u.ModelContextWindow)
+	}
+	parts = append(parts, fmt.Sprintf("in %d", u.Total.InputTokens))
+	if u.Total.CachedInputTokens > 0 {
+		parts = append(parts, fmt.Sprintf("cached %d", u.Total.CachedInputTokens))
+	}
+	parts = append(parts, fmt.Sprintf("out %d", u.Total.OutputTokens))
+	if u.Total.ReasoningOutputTokens > 0 {
+		parts = append(parts, fmt.Sprintf("reasoning %d", u.Total.ReasoningOutputTokens))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (p eventParser) completedItemEvent(item *item) (cula.Event, bool) {

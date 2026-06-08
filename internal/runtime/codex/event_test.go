@@ -93,19 +93,67 @@ func TestParseEventAgentMessagePhase(t *testing.T) {
 	}
 }
 
+func TestParseEventAgentMessageDeltaIgnored(t *testing.T) {
+	delta := rawJSON(t, `{"method":"item/agentMessage/delta","params":{"delta":"I","itemId":"msg_1","threadId":"t","turnId":"u"}}`)
+	if ev, ok := ParseEvent(delta); ok {
+		t.Fatalf("expected delta to be dropped, got %#v", ev)
+	}
+}
+
+func TestParseEventTokenUsage(t *testing.T) {
+	usage := rawJSON(t, `{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"u","tokenUsage":{"total":{"totalTokens":229934,"inputTokens":226261,"cachedInputTokens":164096,"outputTokens":3673,"reasoningOutputTokens":1687},"last":{"totalTokens":35775,"inputTokens":35219,"cachedInputTokens":18304,"outputTokens":556,"reasoningOutputTokens":516},"modelContextWindow":258400}}}`)
+	ev, ok := ParseEvent(usage)
+	if !ok || ev.Type != cula.EventActivity || ev.Activity == nil || ev.Activity.Type != cula.ActivityNarration {
+		t.Fatalf("tokenUsage event = %#v, %v", ev, ok)
+	}
+	want := "tokens 229934/258400 · in 226261 · cached 164096 · out 3673 · reasoning 1687"
+	if got := ev.Activity.Parameters; len(got) != 1 || got[0] != want {
+		t.Fatalf("tokenUsage params = %#v, want [%q]", got, want)
+	}
+
+	missing := rawJSON(t, `{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"u"}}`)
+	ev, ok = ParseEvent(missing)
+	if !ok || ev.Type != cula.EventRaw {
+		t.Fatalf("tokenUsage without body falls through to EventRaw, got %#v, ok=%v", ev, ok)
+	}
+}
+
+func TestParseEventUnknownMethod(t *testing.T) {
+	// Unknown method with a real body — surface as EventRaw so callers
+	// can still inspect the payload.
+	withBody := rawJSON(t, `{"method":"something/new","params":{"hello":"world"}}`)
+	ev, ok := ParseEvent(withBody)
+	if !ok || ev.Type != cula.EventRaw {
+		t.Fatalf("unknown method with body should be EventRaw, got %#v, ok=%v", ev, ok)
+	}
+
+	// Empty body shapes are dropped to keep the stream tidy.
+	for _, raw := range []string{
+		`{"method":"something/new","params":{}}`,
+		`{"method":"something/new","params":null}`,
+		`{"method":"something/new","params":[]}`,
+		`{"method":"something/new"}`,
+	} {
+		if ev, ok := ParseEvent(rawJSON(t, raw)); ok {
+			t.Fatalf("expected drop for empty body %s, got %#v", raw, ev)
+		}
+	}
+}
+
 // TestParseSnapshotSummaryRepo replays a real "Read and summary this
-// repository" trace captured from the codex app-server JSON-RPC stream and
-// asserts the parser classifies every line without dropping any. The codex
-// stream is dominated by streaming deltas (item/agentMessage/delta,
-// thread/tokenUsage/updated, etc.) which intentionally fall through to
-// EventRaw — they must still be surfaced, never silently swallowed.
-// Run scripts/capture-events.sh to regenerate the snapshot when the upstream
+// repository" trace captured from the codex app-server JSON-RPC stream. The
+// parser must (a) classify every method it recognises, (b) drop only the
+// streaming item/agentMessage/delta fragments (their consolidated text comes
+// back on item/completed), and (c) surface every other unrecognised method
+// as EventRaw rather than silently swallowing it. Run
+// scripts/capture-events.sh to regenerate the snapshot when the upstream
 // schema changes.
 func TestParseSnapshotSummaryRepo(t *testing.T) {
 	lines := readSnapshot(t, "summary_repo.jsonl")
 
 	counts := map[cula.EventType]int{}
 	activityCounts := map[cula.ActivityType]int{}
+	var dropped int
 	var sawDone bool
 
 	for i, line := range lines {
@@ -116,7 +164,8 @@ func TestParseSnapshotSummaryRepo(t *testing.T) {
 
 		ev, ok := ParseEvent(raw)
 		if !ok {
-			ev = cula.Event{Type: cula.EventRaw}
+			dropped++
+			continue
 		}
 		ev.Raw = raw
 
@@ -183,8 +232,11 @@ func TestParseSnapshotSummaryRepo(t *testing.T) {
 	for _, c := range counts {
 		total += c
 	}
-	if total != len(lines) {
-		t.Fatalf("event count mismatch: parsed %d events from %d lines (counts=%v)", total, len(lines), counts)
+	if total+dropped != len(lines) {
+		t.Fatalf("event count mismatch: parsed %d events + %d drops from %d lines (counts=%v)", total, dropped, len(lines), counts)
 	}
-	t.Logf("codex snapshot: %d lines, counts=%v, activities=%v", len(lines), counts, activityCounts)
+	if dropped == 0 {
+		t.Errorf("expected some events to be dropped (item/agentMessage/delta), got zero")
+	}
+	t.Logf("codex snapshot: %d lines, %d dropped, counts=%v, activities=%v", len(lines), dropped, counts, activityCounts)
 }
