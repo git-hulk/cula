@@ -643,6 +643,16 @@ func (m *Model) handleEvent(ev cula.Event) {
 			}
 			m.activity = nil
 			m.appendBlock(block{kind: blkNarration, body: body})
+		case cula.ActivityTokenUsage:
+			// Token usage updates can fire many times per turn (per tool
+			// call in opencode, per turn in codex). Show them as a transient
+			// activity row instead of a permanent block so the transcript
+			// doesn't fill up with running totals.
+			body := strings.TrimSpace(strings.Join(ev.Activity.Parameters, " "))
+			if body == "" {
+				return
+			}
+			m.activity = &block{kind: blkNarration, title: "tokens", body: body, active: true}
 		}
 	case cula.EventToolCall:
 		if ev.ToolCall == nil {

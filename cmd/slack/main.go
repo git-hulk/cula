@@ -810,6 +810,11 @@ func renderActivity(activity *cula.Activity) string {
 			return ":large_blue_circle: *Working*\nProcessing the request."
 		}
 		return ":speech_balloon: *Progress update*\n" + params
+	case cula.ActivityTokenUsage:
+		if params == "" {
+			return ":bar_chart: *Token usage*\nAwaiting usage data."
+		}
+		return ":bar_chart: *Token usage*\n" + codeBlock(params)
 	default:
 		if params == "" {
 			return ":large_blue_circle: *Working*\nProcessing the request."

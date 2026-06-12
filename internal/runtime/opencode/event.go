@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	iruntime "github.com/git-hulk/cula/internal/runtime"
@@ -106,6 +107,55 @@ func reasoningSummary(text string) string {
 		return ""
 	}
 	return iruntime.Truncate(text, 80)
+}
+
+// ParseTokenUsage extracts a token_usage activity from an opencode step_finish
+// frame when one carries a tokens payload. It returns false for frames that
+// don't carry tokens — callers should ignore the negative return rather than
+// treat it as an error. Both mid-turn (reason="tool-calls") and terminal
+// (reason="stop") step_finish frames emit a tokens snapshot, so surfacing
+// every one gives users a running view of context use across the turn.
+func ParseTokenUsage(raw json.RawMessage) (cula.Event, bool) {
+	var ev struct {
+		Type string `json:"type"`
+		Part *struct {
+			Tokens json.RawMessage `json:"tokens"`
+		} `json:"part"`
+	}
+	if json.Unmarshal(raw, &ev) != nil || ev.Type != "step_finish" || ev.Part == nil || len(ev.Part.Tokens) == 0 {
+		return cula.Event{}, false
+	}
+	var tokens tokenStats
+	if json.Unmarshal(ev.Part.Tokens, &tokens) != nil {
+		return cula.Event{}, false
+	}
+	return cula.Event{Type: cula.EventActivity, Activity: &cula.Activity{
+		Type:       cula.ActivityTokenUsage,
+		Parameters: []string{formatTokens(tokens)},
+		Data:       ev.Part.Tokens,
+	}}, true
+}
+
+type tokenStats struct {
+	Input     int `json:"input"`
+	Output    int `json:"output"`
+	Reasoning int `json:"reasoning"`
+	Total     int `json:"total"`
+	Cache     struct {
+		Read  int `json:"read"`
+		Write int `json:"write"`
+	} `json:"cache"`
+}
+
+func formatTokens(t tokenStats) string {
+	parts := []string{fmt.Sprintf("tokens %d", t.Total), fmt.Sprintf("in %d", t.Input), fmt.Sprintf("out %d", t.Output)}
+	if t.Reasoning > 0 {
+		parts = append(parts, fmt.Sprintf("reasoning %d", t.Reasoning))
+	}
+	if t.Cache.Read > 0 || t.Cache.Write > 0 {
+		parts = append(parts, fmt.Sprintf("cache r=%d w=%d", t.Cache.Read, t.Cache.Write))
+	}
+	return strings.Join(parts, " · ")
 }
 
 func (eventParser) toolEvent(part *part) (cula.Event, bool) {

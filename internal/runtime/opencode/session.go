@@ -204,6 +204,9 @@ func (s *session) readStdout(r io.Reader) {
 		if id := s.parser.captureSession(raw); id != "" {
 			s.sessionID = id
 		}
+		if usage, ok := ParseTokenUsage(raw); ok {
+			s.emitEvent(raw, usage)
+		}
 		ev, ok := ParseEvent(raw)
 		if !ok {
 			ev = cula.Event{Type: cula.EventRaw}

@@ -22,15 +22,23 @@ const (
 type ActivityType string
 
 const (
-	ActivityThinking  ActivityType = "thinking"
-	ActivityToolCall  ActivityType = "tool_call"
-	ActivityCommand   ActivityType = "command"
-	ActivityNarration ActivityType = "narration"
+	ActivityThinking   ActivityType = "thinking"
+	ActivityToolCall   ActivityType = "tool_call"
+	ActivityCommand    ActivityType = "command"
+	ActivityNarration  ActivityType = "narration"
+	ActivityTokenUsage ActivityType = "token_usage"
 )
 
+// Activity describes an in-flight signal from a runtime that isn't itself
+// assistant text or a tool call — reasoning, a shell command, narration, or a
+// token-usage update. Parameters carries free-form display strings (used by
+// thinking/command/tool_call/narration). Data carries a runtime-specific JSON
+// payload — currently only ActivityTokenUsage uses it, with the per-runtime
+// usage shape preserved verbatim so callers that care can introspect it.
 type Activity struct {
-	Type       ActivityType `json:"type"`
-	Parameters []string     `json:"parameters,omitempty"`
+	Type       ActivityType    `json:"type"`
+	Parameters []string        `json:"parameters,omitempty"`
+	Data       json.RawMessage `json:"data,omitempty"`
 }
 
 type ToolCall struct {
