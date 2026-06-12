@@ -171,7 +171,6 @@ func (s *session) initialize(scanner *bufio.Scanner) error {
 		return fmt.Errorf("send initialized: %w", err)
 	}
 
-	threadID := s.nextRequestID()
 	params := map[string]any{
 		"cwd":            s.input.WorkingDir,
 		"approvalPolicy": string(s.input.Permission),
@@ -186,17 +185,37 @@ func (s *session) initialize(scanner *bufio.Scanner) error {
 	if s.input.Model != "" {
 		params["model"] = s.input.Model
 	}
+	method := "thread/start"
+	if s.input.SessionID != "" {
+		method = "thread/resume"
+		params["threadId"] = s.input.SessionID
+	}
+	threadID, err := s.startThread(scanner, method, params)
+	if err != nil && method == "thread/resume" {
+		delete(params, "threadId")
+		threadID, err = s.startThread(scanner, "thread/start", params)
+	}
+	if err != nil {
+		return err
+	}
+	s.threadID = threadID
+	s.sessionID = threadID
+	return nil
+}
+
+func (s *session) startThread(scanner *bufio.Scanner, method string, params map[string]any) (string, error) {
+	reqID := s.nextRequestID()
 	if err := iruntime.WriteJSONLine(s.stdin, map[string]any{
 		"jsonrpc": "2.0",
-		"id":      threadID,
-		"method":  "thread/start",
+		"id":      reqID,
+		"method":  method,
 		"params":  params,
 	}); err != nil {
-		return fmt.Errorf("send thread/start: %w", err)
+		return "", fmt.Errorf("send %s: %w", method, err)
 	}
-	result, err := s.readJSONRPCResponse(scanner, threadID, true)
+	result, err := s.readJSONRPCResponse(scanner, reqID, true)
 	if err != nil {
-		return fmt.Errorf("thread/start: %w", err)
+		return "", fmt.Errorf("%s: %w", method, err)
 	}
 	var resp struct {
 		Thread struct {
@@ -204,14 +223,12 @@ func (s *session) initialize(scanner *bufio.Scanner) error {
 		} `json:"thread"`
 	}
 	if err := json.Unmarshal(result, &resp); err != nil {
-		return fmt.Errorf("parse thread/start: %w", err)
+		return "", fmt.Errorf("parse %s: %w", method, err)
 	}
 	if resp.Thread.ID == "" {
-		return fmt.Errorf("thread/start returned empty thread id")
+		return "", fmt.Errorf("%s returned empty thread id", method)
 	}
-	s.threadID = resp.Thread.ID
-	s.sessionID = resp.Thread.ID
-	return nil
+	return resp.Thread.ID, nil
 }
 
 func (s *session) consumePrompts() {
