@@ -193,7 +193,6 @@ func (s *session) initialize(scanner *bufio.Scanner) error {
 	threadID, err := s.startThread(scanner, method, params)
 	resumed := err == nil && method == "thread/resume"
 	if err != nil && method == "thread/resume" {
-		delete(params, "threadId")
 		threadID, err = s.startThread(scanner, "thread/start", params)
 	}
 	if err != nil {
