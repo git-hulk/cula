@@ -22,9 +22,9 @@ type event struct {
 }
 
 type params struct {
-	Item       *item       `json:"item"`
-	Turn       *turn       `json:"turn"`
-	TokenUsage *tokenUsage `json:"tokenUsage"`
+	Item       *item           `json:"item"`
+	Turn       *turn           `json:"turn"`
+	TokenUsage json.RawMessage `json:"tokenUsage"`
 }
 
 type turn struct {
@@ -91,10 +91,13 @@ func (p eventParser) parse(raw json.RawMessage) (cula.Event, bool) {
 			}
 		}
 	case "thread/tokenUsage/updated":
-		if pp.TokenUsage != nil {
+		if len(pp.TokenUsage) > 0 {
+			var u tokenUsage
+			_ = json.Unmarshal(pp.TokenUsage, &u)
 			return cula.Event{Type: cula.EventActivity, Activity: &cula.Activity{
-				Type:       cula.ActivityNarration,
-				Parameters: []string{formatTokenUsage(pp.TokenUsage)},
+				Type:       cula.ActivityTokenUsage,
+				Parameters: []string{formatTokenUsage(&u)},
+				Data:       pp.TokenUsage,
 			}}, true
 		}
 	}

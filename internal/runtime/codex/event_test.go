@@ -103,12 +103,19 @@ func TestParseEventAgentMessageDeltaIgnored(t *testing.T) {
 func TestParseEventTokenUsage(t *testing.T) {
 	usage := rawJSON(t, `{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"u","tokenUsage":{"total":{"totalTokens":229934,"inputTokens":226261,"cachedInputTokens":164096,"outputTokens":3673,"reasoningOutputTokens":1687},"last":{"totalTokens":35775,"inputTokens":35219,"cachedInputTokens":18304,"outputTokens":556,"reasoningOutputTokens":516},"modelContextWindow":258400}}}`)
 	ev, ok := ParseEvent(usage)
-	if !ok || ev.Type != cula.EventActivity || ev.Activity == nil || ev.Activity.Type != cula.ActivityNarration {
+	if !ok || ev.Type != cula.EventActivity || ev.Activity == nil || ev.Activity.Type != cula.ActivityTokenUsage {
 		t.Fatalf("tokenUsage event = %#v, %v", ev, ok)
 	}
 	want := "tokens 229934/258400 · in 226261 · cached 164096 · out 3673 · reasoning 1687"
 	if got := ev.Activity.Parameters; len(got) != 1 || got[0] != want {
 		t.Fatalf("tokenUsage params = %#v, want [%q]", got, want)
+	}
+	var data tokenUsage
+	if err := json.Unmarshal(ev.Activity.Data, &data); err != nil {
+		t.Fatalf("tokenUsage data not parseable: %v\nraw=%s", err, ev.Activity.Data)
+	}
+	if data.Total.TotalTokens != 229934 || data.ModelContextWindow != 258400 {
+		t.Fatalf("tokenUsage data = %#v", data)
 	}
 
 	missing := rawJSON(t, `{"method":"thread/tokenUsage/updated","params":{"threadId":"t","turnId":"u"}}`)
@@ -221,6 +228,7 @@ func TestParseSnapshotSummaryRepo(t *testing.T) {
 		cula.ActivityThinking,
 		cula.ActivityCommand,
 		cula.ActivityNarration,
+		cula.ActivityTokenUsage,
 	}
 	for _, a := range expectedActivities {
 		if activityCounts[a] == 0 {

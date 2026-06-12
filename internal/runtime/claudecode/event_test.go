@@ -73,6 +73,41 @@ func TestParseEventTextToolResultAndSession(t *testing.T) {
 	}
 }
 
+func TestParseTokenUsageFromResult(t *testing.T) {
+	result := rawJSON(t, `{"type":"result","subtype":"success","modelUsage":{"claude-opus-4-7[1m]":{"cacheCreationInputTokens":51164,"cacheReadInputTokens":663106,"contextWindow":1000000,"costUSD":0.725038,"inputTokens":22,"maxOutputTokens":64000,"outputTokens":2944,"webSearchRequests":0}}}`)
+	ev, ok := ParseTokenUsage(result)
+	if !ok || ev.Type != cula.EventActivity || ev.Activity == nil || ev.Activity.Type != cula.ActivityTokenUsage {
+		t.Fatalf("ParseTokenUsage(result) = %#v, %v", ev, ok)
+	}
+	if len(ev.Activity.Parameters) != 1 || !bytes.Contains([]byte(ev.Activity.Parameters[0]), []byte("in 22")) {
+		t.Fatalf("formatted params = %#v", ev.Activity.Parameters)
+	}
+	var data map[string]modelUsageEntry
+	if err := json.Unmarshal(ev.Activity.Data, &data); err != nil {
+		t.Fatalf("token usage data not parseable: %v", err)
+	}
+	if entry, ok := data["claude-opus-4-7[1m]"]; !ok || entry.OutputTokens != 2944 || entry.ContextWindow != 1000000 {
+		t.Fatalf("token usage data = %#v", data)
+	}
+
+	// ParseEvent must continue to map `result` to EventDone — the usage
+	// pipeline is additive, not a replacement.
+	if ev, ok := ParseEvent(result); !ok || ev.Type != cula.EventDone {
+		t.Fatalf("ParseEvent(result) = %#v, %v", ev, ok)
+	}
+
+	// Non-result frames don't carry consolidated usage; ParseTokenUsage
+	// drops them.
+	for _, raw := range []string{
+		`{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":2}}}`,
+		`{"type":"result"}`,
+	} {
+		if ev, ok := ParseTokenUsage(rawJSON(t, raw)); ok {
+			t.Fatalf("expected ParseTokenUsage to skip %s, got %#v", raw, ev)
+		}
+	}
+}
+
 // TestParseSnapshotSummaryRepo replays a real "Read and summary this
 // repository" trace captured from the claude CLI and asserts the parser
 // classifies every line without dropping any. Run scripts/capture-events.sh

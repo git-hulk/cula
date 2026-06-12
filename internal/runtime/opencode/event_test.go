@@ -68,6 +68,35 @@ func TestParseEventStructuredActivityAndSession(t *testing.T) {
 	}
 }
 
+func TestParseTokenUsageFromStepFinish(t *testing.T) {
+	frame := rawJSON(t, `{"type":"step_finish","sessionID":"ses_x","part":{"type":"step-finish","reason":"tool-calls","tokens":{"cache":{"read":13824,"write":0},"input":327,"output":192,"reasoning":83,"total":14426}}}`)
+	ev, ok := ParseTokenUsage(frame)
+	if !ok || ev.Type != cula.EventActivity || ev.Activity == nil || ev.Activity.Type != cula.ActivityTokenUsage {
+		t.Fatalf("ParseTokenUsage(step_finish) = %#v, %v", ev, ok)
+	}
+	if len(ev.Activity.Parameters) != 1 || !bytes.Contains([]byte(ev.Activity.Parameters[0]), []byte("tokens 14426")) {
+		t.Fatalf("formatted params = %#v", ev.Activity.Parameters)
+	}
+	var tokens tokenStats
+	if err := json.Unmarshal(ev.Activity.Data, &tokens); err != nil {
+		t.Fatalf("token data not parseable: %v", err)
+	}
+	if tokens.Total != 14426 || tokens.Input != 327 || tokens.Cache.Read != 13824 {
+		t.Fatalf("token data = %#v", tokens)
+	}
+
+	// ParseEvent's step_finish branch is untouched — the usage pipeline
+	// runs alongside it, not in place of it.
+	if ev, ok := ParseEvent(rawJSON(t, `{"type":"step_finish","part":{"type":"step-finish","reason":"stop","tokens":{"total":1}}}`)); !ok || ev.Type != cula.EventDone {
+		t.Fatalf("ParseEvent(step_finish stop) = %#v, %v", ev, ok)
+	}
+
+	// Frames without tokens are dropped.
+	if ev, ok := ParseTokenUsage(rawJSON(t, `{"type":"step_finish","part":{"reason":"tool-calls"}}`)); ok {
+		t.Fatalf("expected ParseTokenUsage to skip token-less frame, got %#v", ev)
+	}
+}
+
 // TestParseSnapshotSummaryRepo replays a real "Read and summary this
 // repository" trace captured from `opencode run --format json` and asserts
 // the parser classifies every line without dropping any. step_start frames
