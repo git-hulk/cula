@@ -815,6 +815,11 @@ func renderActivity(activity *cula.Activity) string {
 			return ":bar_chart: *Token usage*\nAwaiting usage data."
 		}
 		return ":bar_chart: *Token usage*\n" + codeBlock(params)
+	case cula.ActivitySession:
+		if params == "" {
+			return ":arrows_counterclockwise: *Session*"
+		}
+		return ":arrows_counterclockwise: *Session* " + params
 	default:
 		if params == "" {
 			return ":large_blue_circle: *Working*\nProcessing the request."

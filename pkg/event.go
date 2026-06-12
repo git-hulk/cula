@@ -27,13 +27,23 @@ const (
 	ActivityCommand    ActivityType = "command"
 	ActivityNarration  ActivityType = "narration"
 	ActivityTokenUsage ActivityType = "token_usage"
+	ActivitySession    ActivityType = "session"
+)
+
+// Session lifecycle phases reported by ActivitySession in Activity.Parameters[0].
+const (
+	SessionStarted = "started"
+	SessionResumed = "resumed"
+	SessionClosed  = "closed"
 )
 
 // Activity describes an in-flight signal from a runtime that isn't itself
-// assistant text or a tool call — reasoning, a shell command, narration, or a
-// token-usage update. Parameters carries free-form display strings (used by
-// thinking/command/tool_call/narration). Data carries a runtime-specific JSON
-// payload — currently only ActivityTokenUsage uses it, with the per-runtime
+// assistant text or a tool call — reasoning, a shell command, narration, a
+// token-usage update, or a session lifecycle change. Parameters carries
+// free-form display strings (used by thinking/command/tool_call/narration); for
+// ActivitySession the first element is the lifecycle phase (started/resumed/
+// closed) followed by the session ID when known. Data carries a runtime-specific
+// JSON payload — currently only ActivityTokenUsage uses it, with the per-runtime
 // usage shape preserved verbatim so callers that care can introspect it.
 type Activity struct {
 	Type       ActivityType    `json:"type"`

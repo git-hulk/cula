@@ -191,6 +191,7 @@ func (s *session) initialize(scanner *bufio.Scanner) error {
 		params["threadId"] = s.input.SessionID
 	}
 	threadID, err := s.startThread(scanner, method, params)
+	resumed := err == nil && method == "thread/resume"
 	if err != nil && method == "thread/resume" {
 		delete(params, "threadId")
 		threadID, err = s.startThread(scanner, "thread/start", params)
@@ -200,7 +201,25 @@ func (s *session) initialize(scanner *bufio.Scanner) error {
 	}
 	s.threadID = threadID
 	s.sessionID = threadID
+	phase := cula.SessionStarted
+	if resumed {
+		phase = cula.SessionResumed
+	}
+	s.emitSession(phase, s.doneCh)
 	return nil
+}
+
+// emitSession reports a session lifecycle change (started/resumed/closed) as an
+// activity event carrying the phase and the resolved session ID. The closed
+// phase is emitted with a nil done channel so teardown can deliver it after
+// doneCh has already been closed.
+func (s *session) emitSession(phase string, done <-chan struct{}) {
+	iruntime.Emit(s.events, done, cula.Event{
+		Type:      cula.EventActivity,
+		Runtime:   cula.RuntimeCodex,
+		SessionID: s.sessionID,
+		Activity:  &cula.Activity{Type: cula.ActivitySession, Parameters: []string{phase, s.sessionID}},
+	})
 }
 
 func (s *session) startThread(scanner *bufio.Scanner, method string, params map[string]any) (string, error) {
@@ -372,6 +391,7 @@ func (s *session) wait() {
 			ExitCode:  &code,
 		})
 	}
+	s.emitSession(cula.SessionClosed, nil)
 	s.doneOnce.Do(func() {
 		close(s.doneCh)
 	})

@@ -643,6 +643,10 @@ func (m *Model) handleEvent(ev cula.Event) {
 			}
 			m.activity = nil
 			m.appendBlock(block{kind: blkNarration, body: body})
+		case cula.ActivitySession:
+			m.activity = nil
+			body := "session " + strings.TrimSpace(strings.Join(ev.Activity.Parameters, " "))
+			m.appendBlock(block{kind: blkNarration, body: strings.TrimSpace(body)})
 		case cula.ActivityTokenUsage:
 			// Token usage updates can fire many times per turn (per tool
 			// call in opencode, per turn in codex). Show them as a transient
